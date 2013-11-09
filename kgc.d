@@ -2,6 +2,7 @@ module gc.gc;
 
 import gc.misc;
 import gc.freelists;
+import t_main = gc.t_main : yield;
 import gc.t_marker;
 //import gc.t_sweeper;
 
@@ -65,13 +66,14 @@ class KGC
             __gshared PointerQueue* miscRootQueueCopy;
             __gshared Range* rangesCopy;
             
-            __gshared GCMutex mutatorLock;
-            __gshared byte[__traits(classInstanceSize, GCMutex)] mutexStorage;
+            __gshared GCMutex mutatorLock, freeQueueLock;
+            __gshared byte[__traits(classInstanceSize, GCMutex)] mutexStorage, mutexStorage2;
             
             __gshared CollectMode collectInProgress;
             
             //these control the threshold
-            __gshared size_t bytesAllocated;
+            __gshared size_t bytesAllocated; //this must only increase
+            __gshared size_t bytesReleased; //ditto
             immutable size_t collectStart = 4000;
             immutable size_t collectStop = 3500;
             
@@ -112,6 +114,9 @@ class KGC
             mutexStorage[] = GCMutex.classinfo.init[];
             mutatorLock = cast(GCMutex)mutexStorage.ptr;
             mutatorLock.__ctor();
+            mutexStorage2[] = GCMutex.classinfo.init[];
+            freeQueueLock = cast(GCMutex)mutexStorage2.ptr;
+            freeQueueLock.__ctor();
             
             primaryFL.initialize(GC_FL_BUFFER_INIT);
             secondaryFL.initialize(GC_FL_BUFFER_INIT);
@@ -127,7 +132,7 @@ class KGC
         debug (USAGE) printf("<GC> Dtor ()\n");
         static if (_gctype == GCType.NEW) {
             
-            stop_workers();
+            //stop_workers();
             
             //primaryFL.freeAll(); <--- apparently you shouldn't do this either
             //                            because it frees the main thread
@@ -358,8 +363,14 @@ class KGC
         } else static if (_gctype == GCType.NEW) {
             
             {
+                
+                //need to lock both mutexes
+                //however sweeper need only lock the second
                 mutatorLock.lock();
                 scope (exit) mutatorLock.unlock();
+                
+                freeQueueLock.lock();
+                scope (exit) freeQueueLock.unlock();
             
                 //if (primaryFL.free(p)) return;
                 //otherwise it's in the secondary list
@@ -367,7 +378,9 @@ class KGC
                 
                 //above is wrong
                 //we must always enqueue
-                freeQueue.enqueue(p);
+                void* rptr = primaryFL.node(p);
+                if (rptr !is null)
+                    freeQueue.enqueue(rptr);
             }
             
         }
@@ -560,15 +573,23 @@ class KGC
         return true;
     }
     
+    void wait() {
+        debug (USAGE) printf("<GC> wait ()\n");
+        
+        while (collectInProgress != CollectMode.OFF) {
+            t_main.yield();
+        }
+    }
+    
     bool collectStartThreshold() {
-        return bytesAllocated > collectStartThreshold;
+        return (bytesAllocated-bytesReleased) > collectStartThreshold;
     }
     
     bool collectStopThreshold() {
         version (SINGLE_COLLECT) {
             return false;
         } else {
-            return bytesAllocated > collectStopThreshold;
+            return (bytesAllocated-bytesReleased) > collectStopThreshold;
         }
     }
     

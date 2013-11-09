@@ -30,7 +30,7 @@ struct Freelist {
         void* ptr;
         ubyte color;
         size_t size, capacity;
-        Region* prev;
+        Region* prev, prev2;
     }
     
     Region* tail;
@@ -48,6 +48,7 @@ struct Freelist {
         tail = null;
     }
     
+    //always uses primary
     void* grab(size_t sz, size_t* alloc_size = null) {
         debug (USAGE) printf("<GC> Freelist.grab (%lu,%p)\n",sz,alloc_size);
         size_t bytes = cast(size_t)(sz * buffer)+KGC.GC_EXTRA_SIZE;
@@ -58,11 +59,11 @@ struct Freelist {
             tail = cast(Region*)mem_alloc(Region.sizeof);
             if (tail is null)
                 onOutOfMemoryError();
-            *tail = Region(mem_alloc(bytes), _gc.epoch % 3, sz, bytes, null);
+            *tail = Region(mem_alloc(bytes), _gc.epoch % 3, sz, bytes, null, null);
             if (tail.ptr is null)
                 onOutOfMemoryError();
             if (alloc_size != null)
-                *alloc_size = tail.capacity;
+                *alloc_size += tail.capacity;
             version (unittest) length++;
             printf("malloc'd %p\n",tail.ptr);
             return tail.ptr;
@@ -74,7 +75,7 @@ struct Freelist {
             if (r.capacity >= bytes && r.size == 0 && (r.capacity - bytes) <= MAX_WASTE) {
                 r.size = sz;
                 if (alloc_size != null)
-                    *alloc_size = r.capacity;
+                    *alloc_size += r.capacity;
                 printf("malloc'd %p\n",r.ptr);
                 return r.ptr;
             }
@@ -88,19 +89,20 @@ struct Freelist {
         r = cast(Region*)mem_alloc(Region.sizeof);
         if (r is null)
             onOutOfMemoryError();
-        *r = Region(mem_alloc(bytes), _gc.epoch % 3, sz, bytes, tail);
+        *r = Region(mem_alloc(bytes), _gc.epoch % 3, sz, bytes, tail, null);
         if (r.ptr is null)
             onOutOfMemoryError();
         tail = r;
         
         if (alloc_size != null)
-            *alloc_size = bytes;
+            *alloc_size += bytes;
         
         version (unittest) length++;
         printf("malloc'd %p\n",tail.ptr);
         return tail.ptr;
     }
     
+    //always uses primary
     size_t size(void* p) {
         debug (USAGE) printf("<GC> Freelist.size (%p)\n",p);
         Region* r = tail;
@@ -111,6 +113,7 @@ struct Freelist {
         return 0;
     }
     
+    //always uses primary
     size_t capacity(void* p) {
         debug (USAGE) printf("<GC> Freelist.capacity (%p)\n",p);
         Region* r = tail;
@@ -121,6 +124,19 @@ struct Freelist {
         return 0;
     }
     
+    //always uses primary
+    void* node(void* p) {
+        debug (USAGE) printf("<GC> Freelist.node (%p)\n",p);
+        Region* r = tail;
+        while (r !is null) {
+            if (r.ptr == p)
+                return r;
+        }
+        return null;
+    }
+    
+    //always uses primary
+    //never called by GC
     bool release(void* p, size_t* free_size = null) {
         debug (USAGE) printf("<GC> Freelist.release (%p)\n",p);
         Region* r = tail;
@@ -128,7 +144,7 @@ struct Freelist {
             if (r.ptr == p) {
                 if (r.size == 0) onInvalidMemoryOperationError();
                 if (free_size !is null)
-                    *free_size = r.capacity;
+                    *free_size += r.capacity;
                 r.size = 0;
 
                 return true;
@@ -138,7 +154,16 @@ struct Freelist {
         return false;
     }
     
+    void releaseRegion(void* rp, size_t* free_size = null) {
+        Region* r = cast(Region*)rp;
+        printf("releasing region %p\n",r.ptr);
+        if (free_size !is null)
+            *free_size += r.capacity;
+        r.size = 0;
+    }
+    
     //create a snapshot of all used blocks
+    //uses both
     void snapshot(Freelist* f) {
         debug (USAGE) printf("<GC> Freelist.snapshot (%p)\n",f);
         Region* r = tail, rprev = null;
@@ -146,7 +171,7 @@ struct Freelist {
             if (r.size > 0) {
                 //if (rprev !is null)
                 //    rprev.prev = r.prev;
-                r.prev = f.tail;
+                r.prev2 = f.tail;
                 f.tail = r;
             } else {
                 rprev = r;
@@ -155,7 +180,7 @@ struct Freelist {
         }
     }
     
-    //this is called to process the freeQueue by secondaryFL
+    //this isn't ever called in the current system
     bool free(void* p, size_t* free_size = null) {
         debug (USAGE) printf("<GC> Freelist.free (%p,%p)\n",p,free_size);
         Region* r = tail, rprev = null;
@@ -168,7 +193,7 @@ struct Freelist {
                 }
                 
                 if (r.size > 0 && free_size !is null)
-                    *free_size = r.capacity;
+                    *free_size += r.capacity;
                 
                 mem_free(r.ptr);
                 mem_free(r);
@@ -180,6 +205,7 @@ struct Freelist {
         return false;
     }
     
+    //uses secondary
     void freeSweep(size_t* free_size) {
         debug (USAGE) printf("<GC> Freelist.freeSweep (%p,%p)\n",free_size);
         Region* r = tail;
@@ -187,10 +213,11 @@ struct Freelist {
         ubyte free_color = (_gc.epoch-2)%3;
         while (r !is null) {
             if (r.color == free_color && r.size > 0) {
+                printf("releasing %p\n",r.ptr);
                 freed += r.capacity;
                 r.size = 0;
             }
-            r = r.prev;
+            r = r.prev2;
         }
         if (free_size !is null)
             *free_size = freed;
@@ -212,6 +239,7 @@ struct Freelist {
     }
     
     //this is called instead
+    //uses primary
     void freeAllNodes() {
         debug (USAGE) printf("<GC> Freelist.freeAllNodes ()\n");
         Region* r = tail, rprev;
@@ -224,6 +252,7 @@ struct Freelist {
         version (unittest) length = 0;
     }
     
+    //uses primary
     size_t minimize() {
         debug (USAGE) printf("<GC> Freelist.minimize ()\n");
         Region* r = tail, rprev, prev = null;
@@ -247,6 +276,7 @@ struct Freelist {
         return freed;
     }
     
+    //uses primary
     void* addrOf(void* p) {
         //find allocation block that holds p
         Region* r = tail;
@@ -258,6 +288,7 @@ struct Freelist {
         return null;
     }
     
+    //uses primary
     size_t extend(void* p, size_t minamt, size_t maxamt, bool* fail) {
         //fail is set if there is not enough room to extend
         //0 is returned if fail or p not in list
@@ -279,6 +310,7 @@ struct Freelist {
         return 0;
     }
     
+    //uses primary
     void* regrab(void* p, size_t newsz, size_t* alloc_size = null, size_t* new_alloc_size = null) {
         Region* r = tail;
         while (r !is null) {
@@ -288,7 +320,7 @@ struct Freelist {
                         *new_alloc_size = 0;
                     r.size = newsz;
                     if (alloc_size !is null)
-                        *alloc_size = r.capacity;
+                        *alloc_size += r.capacity;
                     return p;
                 } else {
                     void* newp = grab(newsz, alloc_size);

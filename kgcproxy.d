@@ -62,6 +62,7 @@ package
             void function(void*) gc_removeRange;
             
             size_t function() gc_getBytesAllocated;
+            void function() gc_wait;
             
             void function() gc_dump;
         }
@@ -101,6 +102,7 @@ package
         pthis.gc_removeRange = &gc_removeRange;
         
         pthis.gc_getBytesAllocated = &gc_getBytesAllocated;
+        pthis.gc_wait = &gc_wait;
         
         pthis.gc_dump = &gc_dump;
     }
@@ -355,6 +357,14 @@ extern (C)
             return _gc.getBytesAllocated();
         } else {
             return proxy.gc_getBytesAllocated();
+        }
+    }
+    
+    void gc_wait() {
+        if (proxy is null) {
+            _gc.wait();
+        } else {
+            proxy.gc_wait();
         }
     }
     

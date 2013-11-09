@@ -4,6 +4,7 @@ debug = USAGE;
 
 import clib = core.stdc.stdlib;
 import gc.gc : onOutOfMemoryError, _gcerror, _gcasserterror;
+import gc.proxy;
 version (unittest) import core.stdc.stdio : printf;
 else debug (USAGE) import core.stdc.stdio : printf;
 
@@ -134,6 +135,18 @@ struct PointerQueue {
             if (result) break;
         }
         return result;
+    }
+    
+    void release(size_t* release_size) {
+        size_t released = 0;
+        PNode* pn = root, pnnext;
+        while (pn !is null) {
+            _gc.primaryFL.releaseRegion(pn.ptr, release_size);
+            pnnext = pn.next;
+            clib.free(pn);
+            pn = pnnext;
+        }
+        root = null;
     }
     
 }

@@ -33,49 +33,48 @@ void init_workers() {
 
 //should only be called when the GC is locked
 void launch_workers(ref bool mlaunched, ref bool slaunched) {
-    if (!sweeper.running) {
-        if (sweeper.launched)
-            sweeper.join();
-        sweeper.launch();
+    if (marker.status == LaunchStatus.STOPPED) {
+        marker.join();
     }
-    if (!marker.running) {
-        if (marker.launched)
-            marker.join();
+    if (marker.status == LaunchStatus.READY || marker.status == LaunchStatus.JOINED) {
         marker.launch();
     }
+    if (sweeper.status == LaunchStatus.STOPPED) {
+        sweeper.join();
+    }
+    if (sweeper.status == LaunchStatus.READY || sweeper.status == LaunchStatus.JOINED) {
+        sweeper.launch();
+    }
+    
 }
 
 bool workersLaunched() {
-    return (sweeper.launched && marker.launched);
+    return (sweeper.status != LaunchStatus.READY &&
+            sweeper.status != LaunchStatus.JOINED &&
+            marker.status != LaunchStatus.READY &&
+            marker.status != LaunchStatus.JOINED);
 }
 
+/*
 void stop_workers() {
-    if (marker.running)
+    if (marker.running && marker.handler)
         marker.sigUser2();
-    if (sweeper.running)
+    if (sweeper.running && marer.handler)
         sweeper.sigUser2();
 }
+*/
 
 void join_workers() {
-    if (marker.launched)
-        marker.join();
-    if (sweeper.launched)
-        sweeper.join();
+    marker.join();
+    sweeper.join();
 }
 
 void wake_workers() {
-    marker.sigUser1();
-    sweeper.sigUser1();
+    marker.wake();
+    sweeper.wake();
 }
 
-void marker_fn() {
-    //Respond to signal
-    signal(SIGUSR2, &marker_handler);
-    
-    sigset_t suspendSet, oldSet;
-    sigemptyset(&suspendSet);
-    sigaddset(&suspendSet, SIGUSR1);
-    
+void marker_fn(GCT myThread) {
     scope (exit) printf("marker exit\n");
     
     while (true) {
@@ -84,21 +83,14 @@ void marker_fn() {
          *  Wait
          */
         
-        sigprocmask(SIG_BLOCK, &suspendSet, &oldSet);
-        while (_gc.collectInProgress == CollectMode.OFF) {
-            sigsuspend(&oldSet);
-        }
-        sigprocmask(SIG_UNBLOCK, &suspendSet, null);
-        
+        myThread.suspend(() { return !(_gc.collectInProgress == CollectMode.OFF); });
         _gc.collectInProgress = CollectMode.ON; //ensure CONTINUE is changed to ON
         
         /*
          *  Main
          */
         
-        if (_gc.epoch < 253) _gc.epoch++;
-        else _gc.epoch = 2;
-
+        
         
         //first phase is copy
         //Markers part in this is to scan the stack
@@ -127,6 +119,9 @@ void marker_fn() {
         
         printf("M:(sync complete)\n");
         
+        if (_gc.epoch < 253) _gc.epoch++;
+        else _gc.epoch = 2;
+        
         if (_gc.collectStopThreshold()) {
             //need to keep collecting
             _gc.collectInProgress = CollectMode.CONTINUE;
@@ -138,13 +133,7 @@ void marker_fn() {
     }
 }
 
-void sweeper_fn() {
-    signal(SIGUSR2, &sweeper_handler);
-    
-    sigset_t suspendSet, oldSet;
-    sigemptyset(&suspendSet);
-    sigaddset(&suspendSet, SIGUSR1);
-    
+void sweeper_fn(GCT myThread) {
     scope (exit) printf("sweeper exit\n");
     
     while (true) {
@@ -153,11 +142,7 @@ void sweeper_fn() {
          *  Wait
          */
         
-        sigprocmask(SIG_BLOCK, &suspendSet, &oldSet);
-        while (_gc.collectInProgress == CollectMode.OFF) {
-            sigsuspend(&oldSet);
-        }
-        sigprocmask(SIG_UNBLOCK, &suspendSet, null);
+        myThread.suspend(() { return !(_gc.collectInProgress == CollectMode.OFF); });
         
         /*
          *  Main
@@ -179,13 +164,28 @@ void sweeper_fn() {
          
         //now it's time to do the actual sweep
         
-        //first things first, process the requests in freeQueue
+        size_t release_size = 0;
         
-        //then go through secondaryFL
-        size_t release_size;
+        //first things first, process the requests in freeQueue
+        //since the free queue can only be appended to by the mutator
+        //we don't need to make a copy (fingers crossed)
+        
+        //the whole point of having a free queue is so that
+        //we don't double-free a pointer out from under the sweeper
+        //by calling gc_free on it
+        
+        {
+            _gc.freeQueueLock.lock();
+            scope (exit) _gc.freeQueueLock.unlock();
+            
+            _gc.freeQueue.release(&release_size);
+        }
+        
+        //then go through secondaryFL and merge changes
         _gc.secondaryFL.freeSweep(&release_size);
         
-        //finally, merge changes
+        _gc.bytesReleased += release_size;
+        
          
         /*
          *  Sync
@@ -204,6 +204,7 @@ void sweeper_fn() {
     }
 }
 
+/*
 extern (C) void marker_handler(int sig) nothrow {
     if (sig == SIGUSR2) {
         printf("SIGUSR2 RECEIVED\n");
@@ -223,3 +224,4 @@ extern (C) void sweeper_handler(int sig) nothrow {
         printf("Unknown signal received\n");
     }
 }
+*/

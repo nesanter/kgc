@@ -18,7 +18,10 @@ void main() {
     */
     void* p = gc_malloc(100);
     gc_dump();
+    gc_free(p);
     gc_collect();
+    gc_wait();
+    gc_dump();
 }
 
 /*
