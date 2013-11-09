@@ -16,7 +16,7 @@ package {
 
 /*
  *  The Kool GC
- *   (A variation on VCGC by Huelsbergen and Winterbottom
+ *   (A variation on VCGC by Huelsbergen and Winterbottom)
  * 
  */
 
