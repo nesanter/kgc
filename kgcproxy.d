@@ -61,7 +61,9 @@ package
             void function(void*) gc_removeRoot;
             void function(void*) gc_removeRange;
             
-            void function() gc_flDump;
+            size_t function() gc_getBytesAllocated;
+            
+            void function() gc_dump;
         }
     }
 
@@ -98,7 +100,9 @@ package
         pthis.gc_removeRoot = &gc_removeRoot;
         pthis.gc_removeRange = &gc_removeRange;
         
-        pthis.gc_flDump = &gc_flDump;
+        pthis.gc_getBytesAllocated = &gc_getBytesAllocated;
+        
+        pthis.gc_dump = &gc_dump;
     }
 }
 
@@ -107,13 +111,13 @@ extern (C)
 
     void gc_init()
     {
-		debug (USAGE) printf("<GC> proxy init\n");
-		void* p;
-		ClassInfo ci = gc_t.classinfo;
+        debug (USAGE) printf("<GC> proxy init\n");
+        void* p;
+        ClassInfo ci = gc_t.classinfo;
 
-		p = malloc(ci.init.length);
-		(cast(byte*)p)[0 .. ci.init.length] = ci.init[];
-		_gc = cast(gc_t)p;
+        p = malloc(ci.init.length);
+        (cast(byte*)p)[0 .. ci.init.length] = ci.init[];
+        _gc = cast(gc_t)p;
 
         _gc.initialize();
         // NOTE: The GC must initialize the thread library
@@ -124,7 +128,7 @@ extern (C)
 
     void gc_term()
     {
-		debug (USAGE) printf("<GC> proxy term\n");
+        debug (USAGE) printf("<GC> proxy term\n");
         // NOTE: There may be daemons threads still running when this routine is
         //       called.  If so, cleaning memory out from under then is a good
         //       way to make them crash horribly.  This probably doesn't matter
@@ -270,7 +274,7 @@ extern (C)
         return proxy.gc_query( p );
     }
 
-	/*
+    /*
     // NOTE: This routine is experimental. The stats or function name may change
     //       before it is made officially available.
     GCStats gc_stats()
@@ -346,12 +350,20 @@ extern (C)
         }
     }
     
-    void gc_flDump() {
-		if (proxy is null) {
-			_gc.flDump();
-		} else {
-			proxy.gc_flDump();
-		}
-	}
+    size_t gc_getBytesAllocated() {
+        if (proxy is null) {
+            return _gc.getBytesAllocated();
+        } else {
+            return proxy.gc_getBytesAllocated();
+        }
+    }
+    
+    void gc_dump() {
+        if (proxy is null) {
+            _gc.dump();
+        } else {
+            proxy.gc_dump();
+        }
+    }
 
 }
