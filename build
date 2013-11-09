@@ -1,1 +1,1 @@
-dmd -unittest gctester.d kgc.d kgcmisc.d kgcproxy.d kqueue.d freelists.d kgcworker.d kgcthreading.d
+dmd -unittest gctester.d kgc.d kgcmisc.d kgcproxy.d freelists.d kgcworker.d kgcthreading.d
