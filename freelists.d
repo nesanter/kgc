@@ -355,24 +355,16 @@ unittest {
     Freelist fl;
     fl.initialize(0);
     gcAssert(fl.length == 0);
-    printf("pass test #1\n");
     void* p1 = fl.grab(10);
     void* p2 = fl.grab(8);
     gcAssert(fl.length == 2);
-    printf("pass test #2\n");
     gcAssert(fl.addrOf(p1+1) == p1);
-    printf("pass test #3\n");
     gcAssert(fl.release(p1));
-    printf("pass test #4\n");
     gcAssert(fl.length == 2);
-    printf("pass test #5\n");
     gcAssert(fl.minimize() == 10+KGC.GC_EXTRA_SIZE);
-    printf("pass test #6\n");
     gcAssert(fl.length == 1);
-    printf("pass test #7\n");
     fl.freeAll();
     gcAssert(fl.length == 0);
-    printf("pass test #8\n");
     printf("---end unittest---\n");
 }
 

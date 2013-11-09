@@ -63,6 +63,9 @@ struct Range {
     void* pbot, ptop;
 }
 
+/*
+ *  This could be enhanced with a Freelist
+ */
 struct PointerQueue {
     struct PNode {
         void* ptr;
@@ -71,6 +74,9 @@ struct PointerQueue {
     
     PNode* root;
     size_t length;
+    //used for miscRootsQueue
+    bool dirty;
+    PNode* copyRoot;
     
     void initialize() {
         root = null;
@@ -122,6 +128,7 @@ struct PointerQueue {
                     pnprev.next = pn.next;
                 }
                 clib.free(pn);
+                dirty = true;
                 return;
             }
         }
@@ -147,6 +154,43 @@ struct PointerQueue {
             pn = pnnext;
         }
         root = null;
+    }
+        
+    void copy(PointerQueue* destination) {
+        /*
+        if (root == null) {
+            destination.copyRoot = null;
+            return;
+        }
+        if (dirty || copyRoot is null) {
+            PNode* pn = root, pndest = destination.root, newpn;
+            while (pn !is null) {
+                if (pndest is null) {
+                    newpn = cast(PNode*)clib.malloc(PNode.sizeof);
+                    *newpn = PNode(pn.ptr, null);
+                    pnprev.next = newpn;
+                } else {
+                    pndest.ptr = pn.ptr;
+                    pndest = pndest.next;
+                }
+                
+                pn = pn.next;
+            }
+            destination.copyRoot = pndest is null ? newpn : pndest;
+            copyRoot = newpn;
+            
+            return;
+        } else if (copyRoot != root) {
+            PNode* pn = copyRoot, newpn;
+            while (pn !is null) {
+                newpn = cast(PNode*)clib.malloc(PNode.sizeof);
+                *newpn = PNode(pn.ptr, destination.root);
+                destination.root = newpn;
+                pn = pn.next;
+            }
+            copy
+        }
+        */
     }
     
 }

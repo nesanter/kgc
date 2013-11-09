@@ -7,24 +7,10 @@ import gc.proxy;
 //import std.stdio;
 
 void main() {
-    /*
-    printf("---main---\n");
-    gc_collect();
-    int x;
-    foreach (i; 0 .. 100000) x++;
-    gc_collect();
-    //onGCFatalError();
-    printf("---end main---\n");
-    */
-    void* p = gc_malloc(100);
-    gc_dump();
-    gc_free(p);
-    gc_collect();
-    gc_wait();
-    gc_dump();
+    auto tc = new TestClass;
 }
 
-/*
+
 class TestClass {
     int x, y;
     this() {
@@ -34,4 +20,4 @@ class TestClass {
         printf("dtor\n");
     }
 }
-*/
+

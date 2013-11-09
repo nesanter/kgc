@@ -93,7 +93,7 @@ void marker_fn(GCT myThread) {
         
         
         //first phase is copy
-        //Markers part in this is to scan the stack
+        //Markers part in this is to copy the stack/static data
         //Sweeper will report sweepCopyDone when it's finished it's part
         
         printf("M:(scanning stack)\n");
@@ -155,6 +155,9 @@ void sweeper_fn(GCT myThread) {
         //copy ranges
         
         _gc.primaryFL.snapshot(_gc.secondaryFL);
+        if (_gc.miscRootQueue.dirty) {
+            //_gc.
+        }
         
         printf("S:(sweep)\n");
         //do

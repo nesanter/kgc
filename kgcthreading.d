@@ -110,16 +110,18 @@ final class GCT {
         
         status = LaunchStatus.LAUNCHING;
     }
-    void join() {
+    void join() {        
+        if (status == LaunchStatus.JOINED ||
+            status == LaunchStatus.READY)
+            return;
+        
         debug (USAGE) {
             printf("<GCT> join: ");
             printf(name);
             printf("\n");
         }
         scope (failure) printf("<GCT> join failure");
-        
-        if (status == LaunchStatus.JOINED)
-            onGCFatalError();
+
         
         while (status == LaunchStatus.LAUNCHING) {}
         if (status == LaunchStatus.RUNNING)
@@ -180,7 +182,6 @@ version (unittest) {
 unittest {
     printf("---GCT unittest---\n");
     static void dummyfn(GCT myThread) {
-        printf("DUMMY\n");
         myThread.suspend(() { return testflag; });
     }
     
