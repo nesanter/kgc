@@ -24,8 +24,8 @@ version = SINGLE_COLLECT;
 
 debug = USAGE;
 debug = GCPRINTF;
-enum GCType { NONE, KOOL }
-immutable GCType _gctype = GCType.KOOL;
+enum GCType { NONE, NEW }
+immutable GCType _gctype = GCType.NEW;
 
 package __gshared GCError _gcerror;
 private __gshared byte[__traits(classInstanceSize, GCError)] _gcerrorStorage;
@@ -38,7 +38,7 @@ debug (GCPRINTF) import core.stdc.stdio;
 
 static if (_gctype == GCType.NONE)
     import clib = core.stdc.stdlib;
-static if (_gctype == GCType.KOOL) {
+static if (_gctype == GCType.NEW) {
     import slib = core.stdc.string;
 }
 
@@ -51,7 +51,7 @@ class KGC
     
     immutable size_t GC_EXTRA_SIZE = uint.sizeof;
     
-    static if (_gctype == GCType.KOOL) {
+    static if (_gctype == GCType.NEW) {
         immutable real GC_FL_BUFFER_INIT = 0.5;
         package {
             __gshared ubyte epoch = 2;
@@ -95,7 +95,7 @@ class KGC
             _gcasserterror.__ctor();
         }
         
-        static if (_gctype == GCType.KOOL) {
+        static if (_gctype == GCType.NEW) {
             primaryFL = cast(Freelist*)clib.malloc(Freelist.sizeof);
             if (!primaryFL)
                 onOutOfMemoryError();
@@ -125,7 +125,7 @@ class KGC
     
     void Dtor() {
         debug (USAGE) printf("<GC> Dtor ()\n");
-        static if (_gctype == GCType.KOOL) {
+        static if (_gctype == GCType.NEW) {
             
             stop_workers();
             
@@ -186,7 +186,7 @@ class KGC
         debug (USAGE) printf("<GC> getAttr (%p)\n",p);
         static if (_gctype == GCType.NONE) {
             onInvalidMemoryOperationError();
-        } else static if (_gctype == GCType.KOOL) {
+        } else static if (_gctype == GCType.NEW) {
             
             size_t asz;
             
@@ -208,7 +208,7 @@ class KGC
         debug (USAGE) printf("<GC> setAttr (%p,%u)\n",p,mask);
         static if (_gctype == GCType.NONE) {
             onInvalidMemoryOperationError();
-        } else static if (_gctype == GCType.KOOL) {
+        } else static if (_gctype == GCType.NEW) {
             
             size_t asz;
             
@@ -230,7 +230,7 @@ class KGC
         debug (USAGE) printf("<GC> clrAttr (%p,%u)\n",p,mask);
         static if (_gctype == GCType.NONE) {
             onInvalidMemoryOperationError();
-        } else static if (_gctype == GCType.KOOL) {
+        } else static if (_gctype == GCType.NEW) {
 
             size_t asz;
 
@@ -256,7 +256,7 @@ class KGC
         static if (_gctype == GCType.NONE) {
             void* p = clib.malloc(size+GC_EXTRA_SIZE);
             *alloc_size = size+GC_EXTRA_SIZE;                
-        } else static if (_gctype == GCType.KOOL) {
+        } else static if (_gctype == GCType.NEW) {
             mutatorLock.lock();
             scope (exit) mutatorLock.unlock();
             
@@ -275,7 +275,7 @@ class KGC
         debug (USAGE) printf("<GC> calloc (%lu,%u,%p)\n",size,bits,alloc_size);
         static if (_gctype == GCType.NONE) {
             void* p = clib.calloc(1, size);
-        } else static if (_gctype == GCType.KOOL) {
+        } else static if (_gctype == GCType.NEW) {
             //no need to lock since KGC.malloc locks
             void* p = malloc(size, bits, alloc_size);
             slib.memset(p, 0, size);
@@ -294,7 +294,7 @@ class KGC
             *alloc_size = size+GC_EXTRA_SIZE;
             setBits(newp, *alloc_size-GC_EXTRA_SIZE, bits);
             return newp;
-        } else static if (_gctype == GCType.KOOL) {
+        } else static if (_gctype == GCType.NEW) {
             
             void* newp;
             
@@ -319,7 +319,7 @@ class KGC
         debug (USAGE) printf("<GC> extend (%p,%lu,%lu)\n",p,minsize,maxsize);
         static if (_gctype == GCType.NONE) {
             return 0;
-        } else static if (_gctype == GCType.KOOL) {
+        } else static if (_gctype == GCType.NEW) {
             //with current allocation scheme this is heavily dependent
             //on the chosen blocksize
             
@@ -345,7 +345,7 @@ class KGC
         debug (USAGE) printf("<GC> reserve (%lu)\n",size);
         static if (_gctype == GCType.NONE) {
             return 0;
-        } else static if (_gctype == GCType.KOOL) {
+        } else static if (_gctype == GCType.NEW) {
             return 0;
         } else 
             return 0;
@@ -355,7 +355,7 @@ class KGC
         debug (USAGE) printf("<GC> free (%p)\n",p);
         static if (_gctype == GCType.NONE) {
             clib.free(p);
-        } else static if (_gctype == GCType.KOOL) {
+        } else static if (_gctype == GCType.NEW) {
             
             {
                 mutatorLock.lock();
@@ -377,7 +377,7 @@ class KGC
         debug (USAGE) printf("<GC> addrOf (%p)\n",p);
         static if (_gctype == GCType.NONE) {
             return null;
-        } else static if (_gctype == GCType.KOOL) {
+        } else static if (_gctype == GCType.NEW) {
             
             void* base;
             
@@ -399,7 +399,7 @@ class KGC
         debug (USAGE) printf("<GC> sizeOf (%p)\n",p);
         static if (_gctype == GCType.NONE) {
             return 0;
-        } else static if (_gctype == GCType.KOOL) {
+        } else static if (_gctype == GCType.NEW) {
             
             size_t size;
             
@@ -426,7 +426,7 @@ class KGC
         debug (USAGE) printf("<GC> check (%p)\n",p);
         static if (_gctype == GCType.NONE) {
             //do nothing
-        } else static if (_gctype == GCType.KOOL) {
+        } else static if (_gctype == GCType.NEW) {
             
             {
                 mutatorLock.lock();
@@ -441,7 +441,7 @@ class KGC
         debug (USAGE) printf("<GC> addRoot (%p)\n",p);
         static if (_gctype == GCType.NONE) {
             //do nothing
-        } else static if (_gctype == GCType.KOOL) {
+        } else static if (_gctype == GCType.NEW) {
             
             {
                 mutatorLock.lock();
@@ -456,7 +456,7 @@ class KGC
         debug (USAGE) printf("<GC> removeRoot (%p)\n",p);
         static if (_gctype == GCType.NONE) {
             //do nothing
-        } else static if (_gctype == GCType.KOOL) {
+        } else static if (_gctype == GCType.NEW) {
             
             {
                 mutatorLock.lock();
@@ -469,7 +469,7 @@ class KGC
     
     @property int delegate(int delegate(ref void*)) rootIter() {
         debug (USAGE) printf("<GC> rootIter ()\n");
-        static if (_gctype == GCType.KOOL) {
+        static if (_gctype == GCType.NEW) {
             return &miscRootQueue.iter;
         }
         return null;
@@ -479,7 +479,7 @@ class KGC
         debug (USAGE) printf("<GC> addRange (%p,%lu)\n",p,sz);
         static if (_gctype == GCType.NONE) {
             //do nothing
-        } else static if (_gctype == GCType.KOOL) {
+        } else static if (_gctype == GCType.NEW) {
             //this is a fairly slow operation
             //but really shouldn't be called all that often
             
@@ -505,7 +505,7 @@ class KGC
         debug (USAGE) printf("<GC> removeRange (%p)\n",p);
         static if (_gctype == GCType.NONE) {
             //do nothing
-        } else static if (_gctype == GCType.KOOL) {
+        } else static if (_gctype == GCType.NEW) {
             
             {
                 mutatorLock.lock();
@@ -524,7 +524,7 @@ class KGC
     
     @property int delegate(int delegate(ref Range)) rangeIter() {
         debug (USAGE) printf("<GC> rangeIter ()\n");
-        static if (_gctype == GCType.KOOL) {
+        static if (_gctype == GCType.NEW) {
             return &_rangeIter;
         }
         return null;
@@ -578,7 +578,7 @@ class KGC
     
     void minimize() {
         debug (USAGE) printf("<GC> minimize ()\n");
-        static if (_gctype == GCType.KOOL) {
+        static if (_gctype == GCType.NEW) {
             primaryFL.minimize(); //releases free regions
             //DON'T minimize secondaryFL
             //(this wouldn't even help since it's mostly used anyways)
@@ -606,7 +606,7 @@ class KGC
     
     //debug
     void dump() {
-        static if (_gctype == GCType.KOOL) {
+        static if (_gctype == GCType.NEW) {
             printf("EPOCH: %hhu\n",epoch);
             printf("USED BYTES: %lu\n",bytesAllocated);
             printf("PRIMARY:\n");
