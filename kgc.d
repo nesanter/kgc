@@ -65,6 +65,7 @@ class KGC
             __gshared Freelist* secondaryFL;
             __gshared PointerQueue* miscRootQueueCopy;
             __gshared Range* rangesCopy;
+            __gshared bool rangesDirty;
             
             __gshared GCMutex mutatorLock, freeQueueLock;
             __gshared byte[__traits(classInstanceSize, GCMutex)] mutexStorage, mutexStorage2;
