@@ -294,3 +294,15 @@ struct QStateMutex {
         return state == State.ALPHA;
     }
 }
+
+unittest {
+    printf("---QStateMutex unittest---\n");
+    QStateMutex m;
+    m.acquire();
+    gcAssert(!m.inactive);
+    m.transfer();
+    m.acquire2();
+    m.release();
+    gcAssert(m.inactive);
+    printf("---end unittest---\n");
+}
