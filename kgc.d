@@ -1,13 +1,18 @@
 module gc.gc;
 
+debug = USAGE;
+version = SINGLE_COLLECT;
+
 import gc.misc;
 import gc.freelists;
 import t_main = gc.t_main : yield;
 import gc.t_marker;
 //import gc.t_sweeper;
 
+import core.stdc.stdio;
 import core.sync.mutex;
-import core.atomic;
+import core.sync.semaphore;
+//import core.atomic;
 
 package {
     extern (C) void onOutOfMemoryError();
@@ -20,22 +25,10 @@ package {
  * 
  */
 
-version = SINGLE_COLLECT;
-
-
-debug = USAGE;
-debug = GCPRINTF;
 enum GCType { NONE, NEW }
 immutable GCType _gctype = GCType.NEW;
 
-package __gshared GCError _gcerror;
-private __gshared byte[__traits(classInstanceSize, GCError)] _gcerrorStorage;
 
-package __gshared GCAssertError _gcasserterror;
-private __gshared byte[__traits(classInstanceSize, GCAssertError)] _gcasserterrorStorage;
-
-
-debug (GCPRINTF) import core.stdc.stdio;
 
 static if (_gctype == GCType.NONE)
     import clib = core.stdc.stdlib;
@@ -71,6 +64,31 @@ class KGC
             __gshared GCMutex mutatorLock, freeQueueLock;
             __gshared byte[__traits(classInstanceSize, GCMutex)] mutexStorage, mutexStorage2;
             
+            /* The progess lock works like this:
+             *   When no collect is in progress:
+             *     The mutex is inactive (ALPHA)
+             *     collectInProgress is OFF
+             *   When a collect begins:
+             *     collectInProgress is ON (set by mutator)
+             *     the marker acquires the mutex (BETA)
+             *   At the end of the collect:
+             *     the marker sets collectInProgress to OFF or CONTINUE
+             *     the marker transfers the mutex (GAMMA)
+             *     the sweeper changes CONTINUE to ON, if necessary
+             *     the sweeper synchronizes with the marker (ALPHA)
+             *   To initiate a collect:
+             *     Lock the mutex
+             *     If the mutex is inactive (ALPHA),
+             *       if collectInProgress is OFF
+             *         set it to ON
+             *         launch/wake the workers
+             *     else a collect is already in progress
+             *     Unlock the mutex
+             *   To wait for a collect to complete
+             *     use the wait() method of the mutex
+             */
+            __gshared QStateMutex progressLock;
+            
             __gshared CollectMode collectInProgress;
             
             //these control the threshold
@@ -84,20 +102,6 @@ class KGC
     
     void initialize() {
         debug (USAGE) printf("<GC> initialize ()\n");
-        
-        _gcerrorStorage[] = GCError.classinfo.init[];
-        _gcerror = cast(GCError)_gcerrorStorage.ptr;
-        _gcerror.__ctor();
-        
-        version (assert) {
-            _gcasserterrorStorage[] = GCAssertError.classinfo.init[];
-            _gcasserterror = cast(GCAssertError)_gcasserterrorStorage.ptr;
-            _gcasserterror.__ctor();
-        } else version (unittest) {
-            _gcasserterrorStorage[] = GCAssertError.classinfo.init[];
-            _gcasserterror = cast(GCAssertError)_gcasserterrorStorage.ptr;
-            _gcasserterror.__ctor();
-        }
         
         static if (_gctype == GCType.NEW) {
             /*
@@ -128,7 +132,6 @@ class KGC
             miscRootQueue.initialize();
             
             init_workers();
-            printf("init complete\n");
         }
     }
     
@@ -137,6 +140,7 @@ class KGC
         static if (_gctype == GCType.NEW) {
             
             //stop_workers();
+            join_workers(); // <--- do this first otherwise it messes up sweeper
             
             //primaryFL.freeAll(); <--- apparently you shouldn't do this either
             //                            because it frees the main thread
@@ -175,7 +179,6 @@ class KGC
             miscRootQueueCopy.freeNodes();
             //clib.free(miscRootQueue);
             
-            join_workers();
         }
     }
     
@@ -566,29 +569,24 @@ class KGC
     bool fullCollect() {
         debug (USAGE) printf("<GC> fullCollect ()\n");
         
-        {
-            mutatorLock.lock();
-            scope (exit) mutatorLock.unlock();
-            
-            if (collectInProgress != CollectMode.OFF) {
-                return false;
+        if (progressLock.inactive) {
+            if (collectInProgress == CollectMode.OFF) {
+                collectInProgress = CollectMode.ON;
+                if (workersActive()) wake_workers();
+                else launch_workers();
+                return true;
             }
-            
-            collectInProgress = CollectMode.ON;
-            
-            bool ml, sl;
-            if (!workersLaunched()) launch_workers(ml, sl);
-            else wake_workers();
         }
-        
-        return true;
+        return false;
     }
     
-    void wait() {
+    bool wait(bool full) {
         debug (USAGE) printf("<GC> wait ()\n");
-        
-        while (collectInProgress != CollectMode.OFF) {
-            t_main.yield();
+        if (full) {
+            while (progressLock.wait(() { return collectInProgress != CollectMode.OFF; })) {}
+            return true;
+        } else {
+            return progressLock.wait(() { return collectInProgress != CollectMode.OFF; });
         }
     }
     
@@ -639,12 +637,17 @@ class KGC
     //debug
     void dump() {
         static if (_gctype == GCType.NEW) {
-            printf("EPOCH: %hhu\n",epoch);
-            printf("USED BYTES: %lu\n",bytesAllocated);
-            printf("PRIMARY:\n");
+            printf("+--KGC INFO---\n");
+            printf("| EPOCH: %hhu\n",epoch);
+            printf("| ACTIVE BYTES: %lu (%lu/%lu)\n",bytesAllocated-bytesReleased,bytesAllocated,bytesReleased);
+            final switch (collectInProgress) {
+                case CollectMode.OFF: printf("| COLLECT: OFF\n"); break;
+                case CollectMode.CONTINUE: printf("| COLLECT: CONTINUE\n"); break;
+                case CollectMode.ON: printf("| COLLECT: ON\n"); break;
+            }
+            printf("+-------------\n");
             primaryFL.print();
-            printf("SECONDARY:\n");
-            secondaryFL.print();
+            printf("+-------------\n");
         }
     }
 }

@@ -1,5 +1,7 @@
 module gc.t_marker;
 
+debug = VERBOSE;
+
 import gc.proxy;
 import gc.misc : onGCFatalError, Range;
 import gc.t_main;
@@ -15,13 +17,14 @@ __gshared byte[__traits(classInstanceSize, GCT)] markerStorage;
 __gshared GCT sweeper;
 __gshared byte[__traits(classInstanceSize, GCT)] sweeperStorage;
 
-private __gshared bool sweepFinished, sweepCopyDone;
+__gshared bool sweepCopyDone, sweepFinished;
+__gshared Condition syncCondition1, syncCondition2, syncCondition3;
 
 enum CollectMode {
     OFF, ON, CONTINUE
 }
 
-immutable bool workerStayAlive = false;
+immutable bool workerStayAlive = true;
 
 void init_workers() {
     markerStorage[] = GCT.classinfo.init[];
@@ -30,10 +33,12 @@ void init_workers() {
     sweeperStorage[] = GCT.classinfo.init[];
     sweeper = cast(GCT)sweeperStorage.ptr;
     sweeper.__ctor("sweeper\0", &sweeper_fn);
+    syncCondition1.initialize();
+    syncCondition2.initialize();
 }
 
 //should only be called when the GC is locked
-void launch_workers(ref bool mlaunched, ref bool slaunched) {
+void launch_workers() {
     if (marker.status == LaunchStatus.STOPPED) {
         marker.join();
     }
@@ -46,16 +51,14 @@ void launch_workers(ref bool mlaunched, ref bool slaunched) {
     if (sweeper.status == LaunchStatus.READY || sweeper.status == LaunchStatus.JOINED) {
         sweeper.launch();
     }
-    
 }
 
-bool workersLaunched() {
-    return (sweeper.status != LaunchStatus.READY &&
-            sweeper.status != LaunchStatus.JOINED &&
-            marker.status != LaunchStatus.READY &&
-            marker.status != LaunchStatus.JOINED);
+bool workersActive() {
+    return (sweeper.status == LaunchStatus.LAUNCHING ||
+            sweeper.status == LaunchStatus.RUNNING) &&
+            (marker.status == LaunchStatus.LAUNCHING ||
+            marker.status == LaunchStatus.RUNNING);
 }
-
 /*
 void stop_workers() {
     if (marker.running && marker.handler)
@@ -76,7 +79,7 @@ void wake_workers() {
 }
 
 void marker_fn(GCT myThread) {
-    scope (exit) printf("marker exit\n");
+    debug (VERBOSE) scope (exit) printf("<M> exit\n");
     
     while (true) {
         
@@ -84,8 +87,13 @@ void marker_fn(GCT myThread) {
          *  Wait
          */
         
-        myThread.suspend(() { return !(_gc.collectInProgress == CollectMode.OFF); });
-        _gc.collectInProgress = CollectMode.ON; //ensure CONTINUE is changed to ON
+        myThread.suspend(() { return (_gc.collectInProgress == CollectMode.OFF); });
+            
+        _gc.progressLock.acquire();
+
+        //this isn't needed: (it's now the sweeper's job)
+        //_gc.collectInProgress = CollectMode.ON; //ensure CONTINUE is changed to ON
+        
         
         /*
          *  Main
@@ -97,15 +105,15 @@ void marker_fn(GCT myThread) {
         //Markers part in this is to copy the stack/static data
         //Sweeper will report sweepCopyDone when it's finished it's part
         
-        printf("M:(scanning stack)\n");
+        debug (VERBOSE) printf("<M> scanning stack\n");
         
         while (!sweepCopyDone) {
-            sched_yield();
+            syncCondition1.wait();
         }
         
         //now it's time to do marking
         
-        printf("M:(marking)\n");
+        debug (VERBOSE) printf("<M> marking\n");
         
         /*
          *  Sync
@@ -113,29 +121,35 @@ void marker_fn(GCT myThread) {
         
         while (!sweepFinished) {
             //wait for sweeper
-            sched_yield();
+            syncCondition2.wait();
         }
         sweepFinished = false;
         sweepCopyDone = false;
         
-        printf("M:(sync complete)\n");
+        debug (VERBOSE) printf("<M> sync complete\n");
         
         if (_gc.epoch < 253) _gc.epoch++;
         else _gc.epoch = 2;
         
-        if (_gc.collectStopThreshold()) {
-            //need to keep collecting
-            _gc.collectInProgress = CollectMode.CONTINUE;
-        } else {
-            _gc.collectInProgress = CollectMode.OFF;
-            if (!workerStayAlive)
-                return;
-        }    
+        {
+            scope (exit) {
+                _gc.progressLock.transfer();
+                syncCondition3.notify();
+            }
+            if (_gc.collectStopThreshold()) {
+                //need to keep collecting
+                _gc.collectInProgress = CollectMode.CONTINUE;
+            } else {
+                _gc.collectInProgress = CollectMode.OFF;
+                if (!workerStayAlive)
+                    return;
+            }
+        }
     }
 }
 
 void sweeper_fn(GCT myThread) {
-    scope (exit) printf("sweeper exit\n");
+    debug (VERBOSE) scope (exit) printf("<S> exit\n");
     
     while (true) {
         
@@ -143,7 +157,7 @@ void sweeper_fn(GCT myThread) {
          *  Wait
          */
         
-        myThread.suspend(() { return !(_gc.collectInProgress == CollectMode.OFF); });
+        myThread.suspend(() { return (_gc.collectInProgress == CollectMode.OFF); });
         
         /*
          *  Main
@@ -175,6 +189,7 @@ void sweeper_fn(GCT myThread) {
 
         //signal to marker            
         sweepCopyDone = true;
+        syncCondition1.notify();
         
         //now it's time to do the actual sweep
         
@@ -189,6 +204,9 @@ void sweeper_fn(GCT myThread) {
         //by calling gc_free on it
         
         {
+            myThread.enter_critical_region();
+            scope (exit) myThread.exit_critical_region();
+            
             _gc.freeQueueLock.lock();
             scope (exit) _gc.freeQueueLock.unlock();
             
@@ -198,23 +216,29 @@ void sweeper_fn(GCT myThread) {
         //then go through secondaryFL and merge changes
         _gc.secondaryFL.freeSweep(&release_size);
         
+        debug (VERBOSE) printf("<S> released %llu bytes\n",release_size);
         _gc.bytesReleased += release_size;
-        
          
         /*
          *  Sync
          */
         
         sweepFinished = true;
+        syncCondition2.notify();
         
-        if (!workerStayAlive)
-            if (!_gc.collectStopThreshold())
-                return;
-        while (_gc.collectInProgress == CollectMode.ON) {
-            //wait for marker
-            sched_yield();
+        while (!_gc.progressLock.acquire2()) { syncCondition3.wait(); }
+        
+        debug (VERBOSE) printf("<S> sync complete\n");
+        
+        {
+            scope (exit) _gc.progressLock.release();
+            if (_gc.collectInProgress == CollectMode.CONTINUE) {
+                _gc.collectInProgress = CollectMode.ON;
+            } else {
+                if (!workerStayAlive)
+                    return;
+            }        
         }
-        
     }
 }
 

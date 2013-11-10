@@ -9,16 +9,16 @@ import gc.proxy;
 void main() {
     auto tc = new TestClass;
     void* p = gc_malloc(100);
-    gc_dump();
+    //gc_dump();
     gc_free(p);
     gc_collect();
-    gc_wait();
-    gc_dump();
+    gc_wait(true);
+    //gc_dump();
     p = gc_malloc(50);
-    gc_dump();
+    //gc_dump();
     gc_free(p);
     gc_collect();
-    gc_wait();
+    gc_wait(true);
     gc_dump();
 }
 

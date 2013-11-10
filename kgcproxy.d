@@ -13,11 +13,11 @@
  */
 module gc.proxy;
 
+debug = USAGE;
+
 import gc.gc;
 import gc.misc;
 //import gc.stats;
-
-debug = USAGE;
 
 import core.stdc.stdlib;
 
@@ -62,7 +62,7 @@ package
             void function(void*) gc_removeRange;
             
             size_t function() gc_getBytesAllocated;
-            void function() gc_wait;
+            bool function(bool) gc_wait;
             
             void function() gc_dump;
         }
@@ -360,11 +360,11 @@ extern (C)
         }
     }
     
-    void gc_wait() {
+    bool gc_wait(bool full) {
         if (proxy is null) {
-            _gc.wait();
+            return _gc.wait(full);
         } else {
-            proxy.gc_wait();
+            return proxy.gc_wait(full);
         }
     }
     

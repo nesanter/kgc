@@ -3,9 +3,11 @@ module gc.misc;
 debug = USAGE;
 
 import clib = core.stdc.stdlib;
-import gc.gc : onOutOfMemoryError, _gcerror, _gcasserterror;
+import gc.gc : onOutOfMemoryError;
 import gc.proxy;
+import gc.t_main;
 import core.sys.posix.signal;
+import core.atomic;
 version (unittest) import core.stdc.stdio : printf;
 else debug (USAGE) import core.stdc.stdio : printf;
 
@@ -45,7 +47,7 @@ class GCAssertError : Error {
 
 void onGCAssertError(bool msg=true) {
     if (msg) printf("<GC> assertion error!\n");
-    throw _gcasserterror;
+    clib.abort();
 }
 
 void gcAssert(bool b) {
@@ -226,4 +228,69 @@ unittest {
     assert(ptrs[2] == &a);
     clib.free(ptrs);
     printf("---end unittest---\n");
+}
+
+struct QStateMutex {
+    enum State { ALPHA, BETA, GAMMA, DELTA }
+    shared bool locked;
+    shared State state;
+    shared int waiters;
+    void initialize() {
+        state = State.ALPHA;
+        locked = false;
+    }
+    
+    private void _lock(bool wait=true, bool yield=true) {
+        while (!cas(&locked, false, true)) {
+            if (!wait) return;
+            if (yield) .yield();
+        }
+    }
+    private void _unlock() {
+        locked = false;
+    }
+    
+    bool wait(bool delegate() dg) {
+        _lock();
+        waiters++;
+        _unlock();
+        
+        while (state != State.ALPHA) {
+            .yield();
+        }
+        bool result = dg();
+        
+        _lock();
+        waiters--;
+        _unlock();
+
+        return result;
+    }
+    
+    bool acquire() {
+        bool result;
+        while (true) {
+            _lock();
+            if (waiters == 0) {
+                result = cas(&state, State.ALPHA, State.BETA);
+                _unlock();
+                return result;
+            }
+            _unlock();
+            .yield();
+        }
+    }
+    bool transfer() {
+        return cas(&state, State.BETA, State.GAMMA);
+    }
+    bool acquire2() {
+        return cas(&state, State.GAMMA, State.DELTA);
+    }
+    bool release() {
+        return cas(&state, State.DELTA, State.ALPHA);
+    }
+    
+    @property bool inactive() {
+        return state == State.ALPHA;
+    }
 }

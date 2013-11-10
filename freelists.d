@@ -11,13 +11,13 @@
 
 module gc.freelists;
 
+debug = USAGE;
+
 import gc.proxy;
 import gc.misc : gcAssert, onGCFatalError;
 import gc.gc : onOutOfMemoryError, onInvalidMemoryOperationError, KGC, mem_free, mem_alloc;
 //import clib = core.stdc.stdlib;
 import slib = core.stdc.string;
-
-debug = USAGE;
 
 version (unittest) import core.stdc.stdio : printf;
 else debug (USAGE) import core.stdc.stdio : printf;
@@ -65,7 +65,7 @@ struct Freelist {
             if (alloc_size != null)
                 *alloc_size += tail.capacity;
             version (unittest) length++;
-            printf("malloc'd %p\n",tail.ptr);
+            //printf("malloc'd %p\n",tail.ptr);
             return tail.ptr;
         }
         
@@ -76,7 +76,7 @@ struct Freelist {
                 r.size = sz;
                 if (alloc_size != null)
                     *alloc_size += r.capacity;
-                printf("malloc'd %p\n",r.ptr);
+                //printf("malloc'd %p\n",r.ptr);
                 return r.ptr;
             }
             
@@ -98,7 +98,7 @@ struct Freelist {
             *alloc_size += bytes;
         
         version (unittest) length++;
-        printf("malloc'd %p\n",tail.ptr);
+        //printf("malloc'd %p\n",tail.ptr);
         return tail.ptr;
     }
     
@@ -160,7 +160,7 @@ struct Freelist {
             printf("BAD POINTER!\n");
             onGCFatalError();
         }
-        printf("releasing region %p\n",r.ptr);
+        //printf("releasing region %p\n",r.ptr);
         if (free_size !is null)
             *free_size += r.capacity;
         r.size = 0;
@@ -215,14 +215,14 @@ struct Freelist {
         ubyte free_color = (_gc.epoch-2)%3;
         while (r !is null) {
             if (r.color == free_color && r.size > 0) {
-                printf("releasing %p\n",r.ptr);
                 freed += r.capacity;
                 r.size = 0;
             }
             r = r.prev2;
         }
         if (free_size !is null)
-            *free_size = freed;
+            *free_size += freed;
+        tail = null;
     }
     
     
@@ -345,7 +345,7 @@ struct Freelist {
         Region* r = tail;
         ulong i;
         while (r !is null) {
-            printf("%lu - %lu bytes of %lu (%hhu)\n",i, r.size, r.capacity, r.color);
+            printf("| %lu - %lu bytes of %lu (%hhu)\n",i, r.size, r.capacity, r.color);
             r = r.prev;
             i++;
         }

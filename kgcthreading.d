@@ -1,5 +1,7 @@
 module gc.t_main;
 
+debug = USAGE;
+
 /* Threading facility for KGC
  * 
  * Uses pthreads
@@ -28,8 +30,6 @@ import core.sys.posix.time;
  * This does not set up a stack to be scanned
  * Or any other thing to allow it to be garbage collected
  */
- 
-debug = USAGE;
 
 enum LaunchStatus { READY, LAUNCHING, RUNNING, STOPPED, JOINED }
 
@@ -44,7 +44,7 @@ extern (C) void* gct_entrypoint(void* arg) {
     }
     
     debug (USAGE) printf("<GCT> thread entry (%s)\n",obj.name);
-    scope (success) printf("<GCT> thread exit (%s)\n",obj.name);
+    debug (USAGE) scope (success) printf("<GCT> thread exit (%s)\n",obj.name);
     scope (failure) printf("<GCT> thread failure (%s)\n",obj.name);
     
     static extern (C) void cleanup_handler(void* arg) nothrow {
@@ -171,7 +171,7 @@ final class GCT {
         debug (USAGE) printf("<GCT> suspend (%s)\n",name);
         sigprocmask(SIG_BLOCK, &suspendSet, &oldSet);
         suspended = true;
-        while (!dg()) {
+        while (dg()) {
             sigsuspend(&oldSet);
         }
         suspended = false;
@@ -197,14 +197,32 @@ void yield() {
     sched_yield();
 }
 
+struct Condition {
+    pthread_cond_t condition;
+    pthread_mutex_t mutex;
+    void initialize() {
+        pthread_cond_init(&condition, null);
+    }
+    void wait() {
+        pthread_mutex_lock(&mutex);
+        pthread_cond_wait(&condition, &mutex);
+        pthread_mutex_unlock(&mutex);
+    }
+    void notify() {
+        pthread_mutex_lock(&mutex);
+        pthread_cond_broadcast(&condition);
+        pthread_mutex_unlock(&mutex);
+    }
+}
+
 version (unittest) {
-    __gshared bool testflag = false;
+    __gshared int testflag = 0;
 }
 
 unittest {
     printf("---GCT unittest---\n");
     static void dummyfn(GCT myThread) {
-        myThread.suspend(() { return testflag; });
+        myThread.suspend(() { return testflag++ == 0; });
     }
     
     GCT dummy;
@@ -216,11 +234,10 @@ unittest {
     
     dummy.launch();
     while (!dummy.suspended) {}
-    testflag = true;
     dummy.wake();
     dummy.join(false);
     
-    gcAssert(testflag);
+    gcAssert(testflag == 2);
     
     printf("---end unittest---\n");
 }
