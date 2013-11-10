@@ -12,6 +12,7 @@
 module gc.freelists;
 
 debug = USAGE;
+version = PTRMAP;
 
 import gc.proxy;
 import gc.misc : gcAssert, onGCFatalError;
@@ -42,6 +43,8 @@ struct Freelist {
     
     version (unittest) size_t length;
     
+    version (PTRMAP) PointerMap pm;
+    
     void initialize(real buf) {
         gcAssert(buf >= 0);
         buffer = (1+buf);
@@ -66,6 +69,7 @@ struct Freelist {
                 *alloc_size += tail.capacity;
             version (unittest) length++;
             //printf("malloc'd %p\n",tail.ptr);
+            version (PTRMAP) pm.add(tail.ptr, tail);
             return tail.ptr;
         }
         
@@ -77,6 +81,7 @@ struct Freelist {
                 if (alloc_size != null)
                     *alloc_size += r.capacity;
                 //printf("malloc'd %p\n",r.ptr);
+                version (PTRMAP) pm.add(r.ptr, r);
                 return r.ptr;
             }
             
@@ -99,6 +104,7 @@ struct Freelist {
         
         version (unittest) length++;
         //printf("malloc'd %p\n",tail.ptr);
+        version (PTRMAP) pm.add(tail.ptr, tail);
         return tail.ptr;
     }
     
@@ -146,7 +152,7 @@ struct Freelist {
                 if (free_size !is null)
                     *free_size += r.capacity;
                 r.size = 0;
-
+                
                 return true;
             }
             r = r.prev;
@@ -290,6 +296,22 @@ struct Freelist {
         return null;
     }
     
+    Region* regionOf(void* p) {
+        Region* r;
+        version (PTRMAP) {
+            r = pm.query(p);
+            if (r !is null)
+                return r;
+        }
+        r = tail;
+        while (r !is null) {
+            if (r.ptr <= p && p < r.ptr + r.size)
+                return r;
+            r = r.prev;
+        }
+        return null;
+    }
+    
     //uses primary
     size_t extend(void* p, size_t minamt, size_t maxamt, bool* fail) {
         //fail is set if there is not enough room to extend
@@ -345,7 +367,10 @@ struct Freelist {
         Region* r = tail;
         ulong i;
         while (r !is null) {
-            printf("| %lu - %lu bytes of %lu (%hhu)\n",i, r.size, r.capacity, r.color);
+            if (pm.query(r.ptr) !is null)
+                printf("| %lu - %lu bytes of %lu (%hhu) [M]\n",i, r.size, r.capacity, r.color);
+            else
+                printf("| %lu - %lu bytes of %lu (%hhu)\n",i, r.size, r.capacity, r.color);
             r = r.prev;
             i++;
         }
@@ -361,6 +386,7 @@ unittest {
     void* p2 = fl.grab(8);
     gcAssert(fl.length == 2);
     gcAssert(fl.addrOf(p1+1) == p1);
+    gcAssert(fl.regionOf(p1).ptr == p1);
     gcAssert(fl.release(p1));
     gcAssert(fl.length == 2);
     gcAssert(fl.minimize() == 10+KGC.GC_EXTRA_SIZE);
@@ -370,3 +396,29 @@ unittest {
     printf("---end unittest---\n");
 }
 
+//used to match pointers to regions
+//this is a first-pass check for marking
+//if this fails, the region list is exhaustively scanned
+//this is only a cache
+struct PointerMap {
+    Freelist.Region*[256] map;
+    
+    struct RegionList {
+        Freelist.Region* ptr;
+        RegionList* next;
+    }
+    
+    ubyte hash(void* p) {
+        return (cast(size_t)p >> 5) & 0xFF;
+    }
+    
+    void add(void* p, Freelist.Region* rp) {
+        map[hash(p)] = rp;
+    }
+    Freelist.Region* query(void* p) {
+        ubyte h = hash(p);
+        if (map[h] is null) return null;
+        if (map[h].ptr != p) return null;
+        return map[h];
+    }
+}

@@ -15,6 +15,7 @@ void main() {
     gc_wait(true);
     //gc_dump();
     p = gc_malloc(50);
+    assert(p == gc_addrOf(p));
     //gc_dump();
     gc_free(p);
     gc_collect();

@@ -34,8 +34,8 @@ class GCError : Error {
     }
 }
 
-void onGCFatalError(bool msg=true) {
-    if (msg) printf("<GC> fatal error! Aborting!\n");
+void onGCFatalError(bool msg=true, int l=__LINE__) {
+    if (msg) printf("<GC> fatal error (line %d)! Aborting!\n",l);
     clib.abort();
 }
 
