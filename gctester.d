@@ -8,6 +8,10 @@ import gc.proxy;
 
 void main() {
     auto tc = new TestClass;
+    void* p = gc_malloc(100);
+    gc_dump();
+    gc_collect();
+    gc_wait();
 }
 
 

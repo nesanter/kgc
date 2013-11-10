@@ -12,7 +12,7 @@
 module gc.freelists;
 
 import gc.proxy;
-import gc.misc : gcAssert;
+import gc.misc : gcAssert, onGCFatalError;
 import gc.gc : onOutOfMemoryError, onInvalidMemoryOperationError, KGC, mem_free, mem_alloc;
 //import clib = core.stdc.stdlib;
 import slib = core.stdc.string;
@@ -156,6 +156,10 @@ struct Freelist {
     
     void releaseRegion(void* rp, size_t* free_size = null) {
         Region* r = cast(Region*)rp;
+        if (r is null) {
+            printf("BAD POINTER!\n");
+            onGCFatalError();
+        }
         printf("releasing region %p\n",r.ptr);
         if (free_size !is null)
             *free_size += r.capacity;
@@ -166,15 +170,13 @@ struct Freelist {
     //uses both
     void snapshot(Freelist* f) {
         debug (USAGE) printf("<GC> Freelist.snapshot (%p)\n",f);
-        Region* r = tail, rprev = null;
+        Region* r = tail;
         while (r !is null) {
             if (r.size > 0) {
                 //if (rprev !is null)
                 //    rprev.prev = r.prev;
                 r.prev2 = f.tail;
                 f.tail = r;
-            } else {
-                rprev = r;
             }
             r = r.prev;
         }
@@ -329,7 +331,7 @@ struct Freelist {
                     slib.memcpy(newp, p, r.size);
                     if (new_alloc_size !is null)
                     r.size = 0; //release r
-                        
+                    
                     return newp;
                 }
             }

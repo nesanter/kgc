@@ -56,15 +56,16 @@ class KGC
         immutable real GC_FL_BUFFER_INIT = 0.5;
         package {
             __gshared ubyte epoch = 2;
-            __gshared Freelist* primaryFL;
-            __gshared PointerQueue* freeQueue, miscRootQueue;
+            __gshared Freelist primaryFL;
+            __gshared PointerQueue freeQueue, miscRootQueue;
             //Ranges are stored in a raw array, not a linked list
             __gshared Range* ranges;
             __gshared size_t nranges;
             
-            __gshared Freelist* secondaryFL;
-            __gshared PointerQueue* miscRootQueueCopy;
+            __gshared Freelist secondaryFL;
+            __gshared PointerQueue miscRootQueueCopy;
             __gshared Range* rangesCopy;
+            __gshared size_t nrangesCopy;
             __gshared bool rangesDirty;
             
             __gshared GCMutex mutatorLock, freeQueueLock;
@@ -99,6 +100,7 @@ class KGC
         }
         
         static if (_gctype == GCType.NEW) {
+            /*
             primaryFL = cast(Freelist*)clib.malloc(Freelist.sizeof);
             if (!primaryFL)
                 onOutOfMemoryError();
@@ -111,6 +113,7 @@ class KGC
             miscRootQueue = cast(PointerQueue*)clib.malloc(PointerQueue.sizeof);
             if (!miscRootQueue)
                 onOutOfMemoryError();
+            */
             
             mutexStorage[] = GCMutex.classinfo.init[];
             mutatorLock = cast(GCMutex)mutexStorage.ptr;
@@ -144,8 +147,8 @@ class KGC
             //substitute for above two lines:
             primaryFL.freeAllNodes();
             
-            clib.free(primaryFL);
-            clib.free(secondaryFL);
+            //clib.free(primaryFL);
+            //clib.free(secondaryFL);
             size_t fql = freeQueue.length;
             if (fql > 0) {
                 void** ptrs = cast(void**)clib.malloc(fql * (void*).sizeof);
@@ -154,7 +157,7 @@ class KGC
                     clib.free(ptrs[i]);
                 clib.free(ptrs);
             }
-            clib.free(freeQueue);
+            //clib.free(freeQueue);
             fql = miscRootQueue.length;
             if (fql > 0) {
                 void** ptrs = cast(void**)clib.malloc(fql * (void*).sizeof);
@@ -163,7 +166,7 @@ class KGC
                     clib.free(ptrs[i]);
                 clib.free(ptrs);
             }
-            clib.free(miscRootQueue);
+            //clib.free(miscRootQueue);
             
             join_workers();
         }

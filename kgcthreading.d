@@ -35,43 +35,53 @@ enum LaunchStatus { READY, LAUNCHING, RUNNING, STOPPED, JOINED }
 
 extern (C) void* gct_entrypoint(void* arg) {
     
-    debug (USAGE) printf("<GCT> entrypoint\n");
-    
-    scope (failure) printf("<GCT> thread failure\n");
-    
     GCT obj = cast(GCT)arg;
     version (assert) {
         if (obj is null) {
-            printf("<GCT> error in entrypoint\n");
+            printf("<GCT> null obj in entrypoint\n");
             pthread_exit(null);
         }
     }
     
+    debug (USAGE) printf("<GCT> thread entry (%s)\n",obj.name);
+    scope (success) printf("<GCT> thread exit (%s)\n",obj.name);
+    scope (failure) printf("<GCT> thread failure (%s)\n",obj.name);
+    
     static extern (C) void cleanup_handler(void* arg) nothrow {
         GCT obj = cast(GCT)arg;
-        if (obj !is null)
+        if (obj !is null) {
             obj.status = LaunchStatus.STOPPED;
-        else
-            printf("obj was null");
-        debug (USAGE) printf("<GCT> cleanup handler\n");
+            debug (USAGE) printf("<GCT> cleanup handler (%s)\n",obj.name);
+        } else {
+            debug (USAGE) printf("<GCT> cleanup handler (null)\n");
+        }
+        
     }
     
     pthread_cleanup cleanup = void;
     cleanup.push(&cleanup_handler, cast(void*)obj);
-    
+
+    //disable wake signal before we are RUNNING
+    signal(SIGUSR1, &handle_wake);
+        
     obj.status = LaunchStatus.RUNNING;
     
     //setup for suspending via .suspend()
-    sigfillset(&obj.suspendSet);
-    sigdelset(&obj.suspendSet, SIGUSR1);
+    sigemptyset(&obj.suspendSet);
+    sigaddset(&obj.suspendSet, SIGUSR1);
     
     obj.run(obj);
     
     cleanup.pop(1);
     
-    debug (USAGE) printf("<GCT> end entrypoint\n");
-    
     return null;
+}
+
+extern (C) void handle_wake(int sig) nothrow {
+    debug (USAGE) {
+        if (sig == SIGUSR1)
+            printf("<GCT> received wake request\n");
+    }
 }
 
 final class GCT {
@@ -81,6 +91,7 @@ final class GCT {
     const(char*) name;
     private void function(GCT) run;
     private sigset_t suspendSet, oldSet;
+    private size_t critical;
     
     this(const(char*) n, void function(GCT) fn) {
         run = fn;
@@ -88,11 +99,7 @@ final class GCT {
     }
     
     void launch() {
-        debug (USAGE) {
-            printf("<GCT> launch: ");
-            printf(name);
-            printf("\n");
-        }
+        debug (USAGE) printf("<GCT> launch (%s)\n",name);
         
         version (assert) {
             gcAssert(status == LaunchStatus.READY || status == LaunchStatus.JOINED);
@@ -110,21 +117,17 @@ final class GCT {
         
         status = LaunchStatus.LAUNCHING;
     }
-    void join() {        
+    void join(bool force=true) {        
         if (status == LaunchStatus.JOINED ||
             status == LaunchStatus.READY)
             return;
         
-        debug (USAGE) {
-            printf("<GCT> join: ");
-            printf(name);
-            printf("\n");
-        }
+        debug (USAGE) printf("<GCT> join (%s)\n",name);
         scope (failure) printf("<GCT> join failure");
 
         
         while (status == LaunchStatus.LAUNCHING) {}
-        if (status == LaunchStatus.RUNNING)
+        if (force && status == LaunchStatus.RUNNING)
             cancel();
         
         if (pthread_join(addr, null))
@@ -134,6 +137,7 @@ final class GCT {
     }
     
     void abort() {
+        debug (USAGE) printf("<GCT> abort (%s)",name);
         if (pthread_equal(pthread_self(), addr)) {
             pthread_exit(null);
         } else {
@@ -143,16 +147,19 @@ final class GCT {
     }
     
     void wake() {
-        debug (USAGE) printf("<GCT> waking\n"); 
+        debug (USAGE) printf("<GCT> waking (%s)\n",name); 
+        if (status != LaunchStatus.RUNNING)
+            return;
+        version (assert) gcAssert(suspended);
         kill(SIGUSR1);
     }
     
     void kill(int sig) {
-        
         pthread_kill(addr, sig);
     }
     
     void cancel() {
+        debug (USAGE) printf("<GCT> cancel (%s)\n",name);
         if (pthread_equal(pthread_self(), addr)) {
             printf("<GCT> cannot cancel self");
             onGCFatalError();
@@ -161,13 +168,28 @@ final class GCT {
     }
     
     void suspend(bool delegate() dg) {
+        debug (USAGE) printf("<GCT> suspend (%s)\n",name);
         sigprocmask(SIG_BLOCK, &suspendSet, &oldSet);
         suspended = true;
         while (!dg()) {
-            sigsuspend(&suspendSet);
+            sigsuspend(&oldSet);
         }
         suspended = false;
         sigprocmask(SIG_UNBLOCK, &suspendSet, null);
+    }
+    
+    void enter_critical_region() {
+        debug (USAGE) printf("<GCT> enter critical region (%s)\n",name);
+        critical++;
+        int oldstate;
+        if (critical == 1) pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &oldstate);
+    }
+    
+    void exit_critical_region() {
+        debug (USAGE) printf("<GCT> exit critical region (%s)\n",name);
+        critical--;
+        int oldstate;
+        if (critical == 0) pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, &oldstate);
     }
 }
 
@@ -190,13 +212,13 @@ unittest {
     dummyStorage[] = GCT.classinfo.init[];
     dummy = cast(GCT)dummyStorage.ptr;
     
-    dummy.__ctor("dummy",&dummyfn);
+    dummy.__ctor("dummy\0",&dummyfn);
     
     dummy.launch();
     while (!dummy.suspended) {}
     testflag = true;
     dummy.wake();
-    dummy.join();
+    dummy.join(false);
     
     gcAssert(testflag);
     

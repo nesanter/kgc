@@ -5,6 +5,7 @@ debug = USAGE;
 import clib = core.stdc.stdlib;
 import gc.gc : onOutOfMemoryError, _gcerror, _gcasserterror;
 import gc.proxy;
+import core.sys.posix.signal;
 version (unittest) import core.stdc.stdio : printf;
 else debug (USAGE) import core.stdc.stdio : printf;
 
@@ -31,9 +32,9 @@ class GCError : Error {
     }
 }
 
-void onGCFatalError(bool msg=false) {
-    if (msg) printf("<GC> fatal error!\n");
-    throw _gcerror;
+void onGCFatalError(bool msg=true) {
+    if (msg) printf("<GC> fatal error! Aborting!\n");
+    clib.abort();
 }
 
 class GCAssertError : Error {
@@ -42,7 +43,7 @@ class GCAssertError : Error {
     }
 }
 
-void onGCAssertError(bool msg=false) {
+void onGCAssertError(bool msg=true) {
     if (msg) printf("<GC> assertion error!\n");
     throw _gcasserterror;
 }
@@ -76,7 +77,7 @@ struct PointerQueue {
     size_t length;
     //used for miscRootsQueue
     bool dirty;
-    PNode* copyRoot;
+    PNode* copyTail, copyRoot;
     
     void initialize() {
         root = null;
@@ -145,6 +146,7 @@ struct PointerQueue {
     }
     
     void release(size_t* release_size) {
+        debug (USAGE) printf("<GC> PointerList.release (%p)\n",release_size);
         size_t released = 0;
         PNode* pn = root, pnnext;
         while (pn !is null) {
@@ -159,11 +161,11 @@ struct PointerQueue {
     void copy(PointerQueue* destination) {
         /*
         if (root == null) {
-            destination.copyRoot = null;
+            destination.copyTail = null;
             return;
         }
-        if (dirty || copyRoot is null) {
-            PNode* pn = root, pndest = destination.root, newpn;
+        if (dirty || copyRoot is null) { //removals have happened
+            PNode* pn = root, pndest = destination.root, newpn, pnprev;
             while (pn !is null) {
                 if (pndest is null) {
                     newpn = cast(PNode*)clib.malloc(PNode.sizeof);
@@ -173,18 +175,20 @@ struct PointerQueue {
                     pndest.ptr = pn.ptr;
                     pndest = pndest.next;
                 }
-                
+                pnprev = pn;
                 pn = pn.next;
             }
-            destination.copyRoot = pndest is null ? newpn : pndest;
-            copyRoot = newpn;
-            
+            destination.copyTail = pndest is null ? newpn : pndest;
+            copyRoot = root;
             return;
-        } else if (copyRoot != root) {
-            PNode* pn = copyRoot, newpn;
+        } else if (copyRoot != root) { //appendings have happened
+            PNode* pn = copyRoot, pndest = destination.copyTail, newpn;
             while (pn !is null) {
-                newpn = cast(PNode*)clib.malloc(PNode.sizeof);
-                *newpn = PNode(pn.ptr, destination.root);
+                if (destination.copyTail is null || destination.copyTail.next is null) {
+                    newpn = cast(PNode*)clib.malloc(PNode.sizeof);
+                    *newpn = PNode(pn.ptr, destination.root);
+                }
+                
                 destination.root = newpn;
                 pn = pn.next;
             }

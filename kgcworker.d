@@ -1,10 +1,11 @@
 module gc.t_marker;
 
 import gc.proxy;
-import gc.misc : onGCFatalError;
+import gc.misc : onGCFatalError, Range;
 import gc.t_main;
 import core.stdc.stdio;
-import core.stdc.stdlib;
+import clib = core.stdc.stdlib;
+import slib = core.stdc.string : memcpy;
 
 import core.sys.posix.pthread : pthread_exit, sched_yield;
 import core.sys.posix.signal;
@@ -25,10 +26,10 @@ immutable bool workerStayAlive = false;
 void init_workers() {
     markerStorage[] = GCT.classinfo.init[];
     marker = cast(GCT)markerStorage.ptr;
-    marker.__ctor("marker", &marker_fn);
+    marker.__ctor("marker\0", &marker_fn);
     sweeperStorage[] = GCT.classinfo.init[];
     sweeper = cast(GCT)sweeperStorage.ptr;
-    sweeper.__ctor("sweeper", &sweeper_fn);
+    sweeper.__ctor("sweeper\0", &sweeper_fn);
 }
 
 //should only be called when the GC is locked
@@ -154,17 +155,27 @@ void sweeper_fn(GCT myThread) {
         //copy roots (miscRootsQueue)
         //copy ranges
         
-        _gc.primaryFL.snapshot(_gc.secondaryFL);
-        if (_gc.miscRootQueue.dirty) {
-            //_gc.
-        }
+        {
+            myThread.enter_critical_region();
+            scope (exit) myThread.exit_critical_region();
+            _gc.mutatorLock.lock();
+            scope (exit) _gc.mutatorLock.unlock();
         
-        printf("S:(sweep)\n");
-        //do
-         
-        //signal to marker
+            _gc.primaryFL.snapshot(&_gc.secondaryFL);
+            if (_gc.miscRootQueue.dirty) {
+                _gc.miscRootQueue.copy(&_gc.miscRootQueueCopy);
+            }
+            if (_gc.rangesDirty) {
+                if (_gc.rangesCopy !is null)
+                    clib.free(_gc.rangesCopy);
+                _gc.rangesCopy = cast(Range*)clib.malloc(_gc.nranges * Range.sizeof);
+                slib.memcpy(_gc.rangesCopy, _gc.ranges, _gc.nranges * Range.sizeof);
+            }
+        }
+
+        //signal to marker            
         sweepCopyDone = true;
-         
+        
         //now it's time to do the actual sweep
         
         size_t release_size = 0;
