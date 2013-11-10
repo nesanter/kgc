@@ -149,6 +149,7 @@ class KGC
             
             //clib.free(primaryFL);
             //clib.free(secondaryFL);
+            /*
             size_t fql = freeQueue.length;
             if (fql > 0) {
                 void** ptrs = cast(void**)clib.malloc(fql * (void*).sizeof);
@@ -157,7 +158,10 @@ class KGC
                     clib.free(ptrs[i]);
                 clib.free(ptrs);
             }
+            */
+            freeQueue.freeNodes();
             //clib.free(freeQueue);
+            /*
             fql = miscRootQueue.length;
             if (fql > 0) {
                 void** ptrs = cast(void**)clib.malloc(fql * (void*).sizeof);
@@ -166,6 +170,9 @@ class KGC
                     clib.free(ptrs[i]);
                 clib.free(ptrs);
             }
+            */
+            miscRootQueue.freeNodes();
+            miscRootQueueCopy.freeNodes();
             //clib.free(miscRootQueue);
             
             join_workers();

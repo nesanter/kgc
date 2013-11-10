@@ -103,8 +103,9 @@ struct PointerQueue {
         length++;
     }
     
+    //I don't think this is/should be used
     void dequeue(void** buffer) {
-        debug (USAGE) printf("<GC> PointerList.dequeue ()\n");
+        debug (USAGE) printf("<GC> PointerList.dequeue (%p)\n",buffer);
         if (length == 0) return;
         //void** ptrs = cast(void**)clib.malloc(length * (void*).sizeof);
         PNode* pn = root, pnnext;
@@ -117,6 +118,16 @@ struct PointerQueue {
             i++;
         }
         length = 0;
+    }
+    
+    void freeNodes() {
+        debug (USAGE) printf("<GC> PointerList.freeNodes ()\n");
+        PNode* pn = root, pnnext;
+        while (pn != null) {
+            pnnext = pn.next;
+            clib.free(pn);
+            pn = pnnext;
+        }
     }
     
     void remove(void* p) {
