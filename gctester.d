@@ -8,16 +8,7 @@ import gc.proxy;
 
 void main() {
     auto tc = new TestClass;
-    void* p = gc_malloc(100);
-    //gc_dump();
-    gc_free(p);
-    gc_collect();
-    gc_wait(true);
-    //gc_dump();
-    p = gc_malloc(50);
-    assert(p == gc_addrOf(p));
-    //gc_dump();
-    gc_free(p);
+    gc_addRoot(cast(void*)tc);
     gc_collect();
     gc_wait(true);
     gc_dump();
@@ -27,10 +18,10 @@ void main() {
 class TestClass {
     int x, y;
     this() {
-        printf("ctor\n");
+        printf(">>>CTOR<<<\n");
     }
     ~this() {
-        printf("dtor\n");
+        printf(">>>DTOR<<<\n");
     }
 }
 

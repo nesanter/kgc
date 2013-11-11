@@ -9,6 +9,8 @@ import t_main = gc.t_main : yield;
 import gc.t_marker;
 //import gc.t_sweeper;
 
+static import core.memory;
+private alias BlkAttr = core.memory.GC.BlkAttr;
 import core.stdc.stdio;
 import core.sync.mutex;
 import core.sync.semaphore;
@@ -18,10 +20,24 @@ package {
     extern (C) void onOutOfMemoryError();
     extern (C) void onInvalidMemoryOperationError();
 }
+private {
+    extern (C) void rt_finalize2(void* p, bool det, bool resetMemory);
+}
 
 /*
  *  The Kool GC
  *   (A variation on VCGC by Huelsbergen and Winterbottom)
+ * 
+ * 
+ *  ---remember this---
+ *    it might be possible to add a third thread, the stack scanner
+ *    that runs while the marker thread marks
+ *    and appends potential pointers to the root set
+ *    the root set would become a set of pointer-pointers
+ *    that remember spots where there were pointers before
+ *    things to think about:
+ *      ensuring the marker doesn't unknowingly scan something
+ *      that is no longer our memory (e.g. previously used stack space)
  * 
  */
 
@@ -46,17 +62,19 @@ class KGC
     immutable size_t GC_EXTRA_SIZE = uint.sizeof;
     
     static if (_gctype == GCType.NEW) {
-        immutable real GC_FL_BUFFER_INIT = 0.5;
+        immutable real GC_FL_BUFFER_INIT = 0.0;
         package {
             __gshared ubyte epoch = 2;
             __gshared Freelist primaryFL;
+            __gshared void* minPtr, maxPtr;
+            __gshared PointerMap flCache;
             __gshared PointerQueue freeQueue, miscRootQueue;
             //Ranges are stored in a raw array, not a linked list
             __gshared Range* ranges;
             __gshared size_t nranges;
             
             __gshared Freelist secondaryFL;
-            __gshared PointerQueue miscRootQueueCopy;
+            __gshared PointerQueue miscRootQueueCopy, rootSet;
             __gshared Range* rangesCopy;
             __gshared size_t nrangesCopy;
             __gshared bool rangesDirty;
@@ -126,8 +144,8 @@ class KGC
             freeQueueLock = cast(GCMutex)mutexStorage2.ptr;
             freeQueueLock.__ctor();
             
-            primaryFL.initialize(GC_FL_BUFFER_INIT);
-            secondaryFL.initialize(GC_FL_BUFFER_INIT);
+            primaryFL.initialize(GC_FL_BUFFER_INIT, &flCache);
+            secondaryFL.initialize(GC_FL_BUFFER_INIT, &flCache);
             freeQueue.initialize();
             miscRootQueue.initialize();
             
@@ -177,8 +195,12 @@ class KGC
             */
             miscRootQueue.freeNodes();
             miscRootQueueCopy.freeNodes();
+            rootSet.freeNodes();
             //clib.free(miscRootQueue);
-            
+            if (ranges !is null)
+                clib.free(ranges);
+            if (rangesCopy !is null)
+                clib.free(rangesCopy);
         }
     }
     
@@ -286,6 +308,11 @@ class KGC
         setBits(p, *alloc_size-GC_EXTRA_SIZE, bits); //put at end of true block
         
         bytesAllocated += *alloc_size;
+        
+        if (p !is null && (p < minPtr || minPtr is null))
+            minPtr = p;
+        if (p !is null && (p+*alloc_size) > maxPtr)
+            maxPtr = p+*alloc_size;
         
         return p;
     }
@@ -497,7 +524,7 @@ class KGC
     @property int delegate(int delegate(ref void*)) rootIter() {
         debug (USAGE) printf("<GC> rootIter ()\n");
         static if (_gctype == GCType.NEW) {
-            return &miscRootQueue.iter;
+            return &miscRootQueue.iter!true;
         }
         return null;
     }
@@ -515,14 +542,20 @@ class KGC
                 scope (exit) mutatorLock.unlock();
                 
                 foreach (i; 0 .. nranges) {
-                    if (ranges[i].ptop is null) {
+                    if (ranges[i].pbot is null) {
                         ranges[i] = Range(p, p+sz);
                         return;
                     }
                 }
                 if (ranges is null) ranges = cast(Range*)clib.malloc(Range.sizeof);
-                else ranges = cast(Range*)clib.realloc(p, (nranges+1) * Range.sizeof);
+                else ranges = cast(Range*)clib.realloc(ranges, (nranges+1) * Range.sizeof);
                 ranges[nranges++] = Range(p, p+sz);
+                
+                rangesDirty = true;
+                
+                foreach (size_t i; 0 .. nranges) {
+                    printf("%lu (%p to %p)\n",i,ranges[i].pbot,ranges[i].ptop);
+                }
             }
             
         }
@@ -578,6 +611,13 @@ class KGC
             }
         }
         return false;
+    }
+    
+    void finalize(void* p, size_t sz) {
+        debug (USAGE) printf("<GC> finalize (%p,%lu)\n",p);
+        if (getBits(p, sz) && BlkAttr.FINALIZE) {
+            rt_finalize2(p, false, false);
+        }
     }
     
     bool wait(bool full) {
@@ -639,12 +679,17 @@ class KGC
         static if (_gctype == GCType.NEW) {
             printf("+--KGC INFO---\n");
             printf("| EPOCH: %hhu\n",epoch);
-            printf("| ACTIVE BYTES: %lu (%lu/%lu)\n",bytesAllocated-bytesReleased,bytesAllocated,bytesReleased);
+            printf("| ACTIVE BYTES: %lu (%lu/%lu)\n",
+                    bytesAllocated-bytesReleased,
+                    bytesAllocated,
+                    bytesReleased
+                );
             final switch (collectInProgress) {
                 case CollectMode.OFF: printf("| COLLECT: OFF\n"); break;
                 case CollectMode.CONTINUE: printf("| COLLECT: CONTINUE\n"); break;
                 case CollectMode.ON: printf("| COLLECT: ON\n"); break;
             }
+            printf("| NRANGES: %lu\n",nranges);
             printf("+-------------\n");
             primaryFL.print();
             printf("+-------------\n");

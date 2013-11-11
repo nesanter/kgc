@@ -43,12 +43,13 @@ struct Freelist {
     
     version (unittest) size_t length;
     
-    version (PTRMAP) PointerMap pm;
+    version (PTRMAP) PointerMap* pm;
     
-    void initialize(real buf) {
+    void initialize(real buf, PointerMap* p) {
         gcAssert(buf >= 0);
         buffer = (1+buf);
         tail = null;
+        pm = p;
     }
     
     //always uses primary
@@ -169,7 +170,9 @@ struct Freelist {
         //printf("releasing region %p\n",r.ptr);
         if (free_size !is null)
             *free_size += r.capacity;
+        _gc.finalize(r.ptr, r.capacity);
         r.size = 0;
+        
     }
     
     //create a snapshot of all used blocks
@@ -222,6 +225,7 @@ struct Freelist {
         while (r !is null) {
             if (r.color == free_color && r.size > 0) {
                 freed += r.capacity;
+                _gc.finalize(r.ptr, r.capacity);
                 r.size = 0;
             }
             r = r.prev2;
@@ -366,11 +370,21 @@ struct Freelist {
         if (tail == null) printf("(nil)\n");
         Region* r = tail;
         ulong i;
+        ubyte white_color = _gc.epoch % 3;
+        ubyte grey_color = (_gc.epoch-1) % 3;
         while (r !is null) {
             if (pm.query(r.ptr) !is null)
-                printf("| %lu - %lu bytes of %lu (%hhu) [M]\n",i, r.size, r.capacity, r.color);
+                printf("| %lu - %lu bytes of %lu (%c) [M]\n",i,
+                        (r.size == 0) ? 0 : r.size+_gc.GC_EXTRA_SIZE, r.capacity,
+                        (r.size == 0) ? '-' : ((r.color == white_color) ? 'W' :
+                        ((r.color == grey_color) ? 'G' : 'B'))
+                    );
             else
-                printf("| %lu - %lu bytes of %lu (%hhu)\n",i, r.size, r.capacity, r.color);
+                printf("| %lu - %lu bytes of %lu (%c)\n",i,
+                        (r.size == 0) ? 0 : r.size+_gc.GC_EXTRA_SIZE, r.capacity,
+                        (r.size == 0) ? '-' : ((r.color == white_color) ? 'W' :
+                        ((r.color == grey_color) ? 'G' : 'B'))
+                    );
             r = r.prev;
             i++;
         }
@@ -380,7 +394,8 @@ struct Freelist {
 unittest {
     printf("---Freelist unittest---\n");
     Freelist fl;
-    fl.initialize(0);
+    PointerMap cache;
+    fl.initialize(0, &cache);
     gcAssert(fl.length == 0);
     void* p1 = fl.grab(10);
     void* p2 = fl.grab(8);

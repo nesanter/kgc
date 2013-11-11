@@ -3,8 +3,9 @@ module gc.t_marker;
 debug = VERBOSE;
 
 import gc.proxy;
-import gc.misc : onGCFatalError, Range;
+import gc.misc : onGCFatalError, Range, PointerQueue;
 import gc.t_main;
+import gc.marking;
 import core.stdc.stdio;
 import clib = core.stdc.stdlib;
 import slib = core.stdc.string : memcpy;
@@ -24,7 +25,7 @@ enum CollectMode {
     OFF, ON, CONTINUE
 }
 
-immutable bool workerStayAlive = true;
+immutable bool workerStayAlive = false;
 
 void init_workers() {
     markerStorage[] = GCT.classinfo.init[];
@@ -88,7 +89,7 @@ void marker_fn(GCT myThread) {
          */
         
         myThread.suspend(() { return (_gc.collectInProgress == CollectMode.OFF); });
-            
+        
         _gc.progressLock.acquire();
 
         //this isn't needed: (it's now the sweeper's job)
@@ -99,13 +100,15 @@ void marker_fn(GCT myThread) {
          *  Main
          */
         
-        
-        
         //first phase is copy
         //Markers part in this is to copy the stack/static data
         //Sweeper will report sweepCopyDone when it's finished it's part
         
         debug (VERBOSE) printf("<M> scanning stack\n");
+        
+        //for each thread:
+        //   scanForPointers(stackptr, stacksz) --> add to rootSet
+        
         
         while (!sweepCopyDone) {
             syncCondition1.wait();
@@ -114,6 +117,19 @@ void marker_fn(GCT myThread) {
         //now it's time to do marking
         
         debug (VERBOSE) printf("<M> marking\n");
+        
+        _gc.miscRootQueueCopy.iter!false((ref ptr) { markRecursive(ptr); return 0;});
+        PointerQueue rangeptrs;
+        for (size_t i=0; i<_gc.nrangesCopy; ++i) {
+            printf("range num: %d\n",i);
+            scanForPointers(_gc.rangesCopy[i].pbot,
+                    _gc.rangesCopy[i].ptop-_gc.rangesCopy[i].pbot,
+                    &rangeptrs
+                );
+            rangeptrs.iterDequeue((ptr) { markRecursive(ptr); });
+        }
+        
+        _gc.rootSet.iter!false((ref ptr) { markRecursive(ptr); return 0;});
         
         /*
          *  Sync
@@ -128,6 +144,8 @@ void marker_fn(GCT myThread) {
         
         debug (VERBOSE) printf("<M> sync complete\n");
         
+        //safe to change epoch
+        //b/c it will occur atomically & we are the only one allowed to
         if (_gc.epoch < 253) _gc.epoch++;
         else _gc.epoch = 2;
         
@@ -176,14 +194,16 @@ void sweeper_fn(GCT myThread) {
             scope (exit) _gc.mutatorLock.unlock();
         
             _gc.primaryFL.snapshot(&_gc.secondaryFL);
-            if (_gc.miscRootQueue.dirty) {
-                _gc.miscRootQueue.copy(&_gc.miscRootQueueCopy);
-            }
+            _gc.miscRootQueue.copy(&_gc.miscRootQueueCopy);
+            printf("miscrootqueuecopy:\n");
+            _gc.miscRootQueueCopy.print!true("miscRootQueueCopy");
+            
             if (_gc.rangesDirty) {
                 if (_gc.rangesCopy !is null)
                     clib.free(_gc.rangesCopy);
                 _gc.rangesCopy = cast(Range*)clib.malloc(_gc.nranges * Range.sizeof);
                 slib.memcpy(_gc.rangesCopy, _gc.ranges, _gc.nranges * Range.sizeof);
+                _gc.nrangesCopy = _gc.nranges;
             }
         }
 
