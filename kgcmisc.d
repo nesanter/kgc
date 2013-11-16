@@ -1,6 +1,6 @@
 module gc.misc;
 
-debug = USAGE;
+//debug = USAGE;
 debug = STATS;
 
 import clib = core.stdc.stdlib;
@@ -11,9 +11,6 @@ import core.sys.posix.signal;
 import core.atomic;
 version (unittest) import core.stdc.stdio : printf;
 else debug (USAGE) import core.stdc.stdio : printf;
-
-
-version = GCASSERT;
 
 struct BlkInfo
 {
@@ -67,13 +64,25 @@ struct Range {
     void* pbot, ptop;
 }
 
-/*
- *  This could be enhanced with a Freelist
- */
-struct PointerQueue {
-    struct PNode {
-        void* ptr;
-        PNode* next;
+void* getStackTop() {
+    asm { naked; mov RAX, RSP; ret; }
+}
+
+alias PointerQueueT!false PointerQueue;
+alias PointerQueueT!true RootSet;
+
+struct PointerQueueT(bool isRootSet) {
+    static if (isRootSet) {
+        struct PNode {
+            void* ptr;
+            PNode* next;
+            void** sptr;
+        }
+    } else {
+        struct PNode {
+            void* ptr;
+            PNode* next;
+        }
     }
     
     PNode* root;
@@ -94,32 +103,57 @@ struct PointerQueue {
         copyRoot = null;
     }
     
-    void enqueue(void* p) {
-        debug (USAGE) printf("<GC> PointerQueue.enqueue (%p)\n",p);
-        debug (STATS) {
-            length++;
-            netAllocs++;
-            if (length > maxLength)
-                maxLength = length;
-        }
-        if (root is null) {
-            root = cast(PNode*)clib.malloc(PNode.sizeof);
-            if (root is null)
+    static if (isRootSet) {
+        void enqueue(void* p, void** b) {
+            debug (USAGE) printf("<GC> PointerQueueT.enqueue (%p)\n",p);
+            debug (STATS) {
+                length++;
+                netAllocs++;
+                if (length > maxLength)
+                    maxLength = length;
+            }
+            if (root is null) {
+                root = cast(PNode*)clib.malloc(PNode.sizeof);
+                if (root is null)
+                    onOutOfMemoryError();
+                *root = PNode(p, null, b);
+                return;
+            }
+            PNode* pn;
+            pn = cast(PNode*)clib.malloc(PNode.sizeof);
+            if (pn is null)
                 onOutOfMemoryError();
-            *root = PNode(p, null);
-            return;
+            *(pn) = PNode(p, root, b);
+            root = pn;
         }
-        PNode* pn;
-        pn = cast(PNode*)clib.malloc(PNode.sizeof);
-        if (pn is null)
-            onOutOfMemoryError();
-        *(pn) = PNode(p, root);
-        root = pn;
+    } else {
+        void enqueue(void* p) {
+            debug (USAGE) printf("<GC> PointerQueueT.enqueue (%p)\n",p);
+            debug (STATS) {
+                length++;
+                netAllocs++;
+                if (length > maxLength)
+                    maxLength = length;
+            }
+            if (root is null) {
+                root = cast(PNode*)clib.malloc(PNode.sizeof);
+                if (root is null)
+                    onOutOfMemoryError();
+                *root = PNode(p, null);
+                return;
+            }
+            PNode* pn;
+            pn = cast(PNode*)clib.malloc(PNode.sizeof);
+            if (pn is null)
+                onOutOfMemoryError();
+            *(pn) = PNode(p, root);
+            root = pn;
+        }
     }
     
     //I don't think this is/should be used
     void dequeue(void** buffer) {
-        debug (USAGE) printf("<GC> PointerQueue.dequeue (%p)\n",buffer);
+        debug (USAGE) printf("<GC> PointerQueueT.dequeue (%p)\n",buffer);
         //void** ptrs = cast(void**)clib.malloc(length * (void*).sizeof);
         PNode* pn = root, pnnext;
         size_t i;
@@ -134,7 +168,7 @@ struct PointerQueue {
     }
     
     void freeNodes() {
-        debug (USAGE) printf("<GC> PointerQueue.freeNodes ()\n");
+        debug (USAGE) printf("<GC> PointerQueueT.freeNodes ()\n");
         debug (STATS) length = 0;
         PNode* pn = root, pnnext;
         while (pn != null) {
@@ -145,7 +179,7 @@ struct PointerQueue {
     }
     
     void remove(void* p) {
-        debug (USAGE) printf("<GC> PointerQueue.remove ()\n");
+        debug (USAGE) printf("<GC> PointerQueueT.remove ()\n");
         PNode* pn = root;
         PNode** pnslot = &root;
         while (pn != null) {
@@ -187,7 +221,7 @@ struct PointerQueue {
     }
         
     void release(size_t* release_size) {
-        debug (USAGE) printf("<GC> PointerQueue.release (%p)\n",release_size);
+        debug (USAGE) printf("<GC> PointerQueueT.release (%p)\n",release_size);
         size_t released = 0;
         PNode* pn = root, pnnext;
         while (pn !is null) {
@@ -212,8 +246,8 @@ struct PointerQueue {
      *  This should work well because there should be either a few roots
      *  or a fairly stable number of roots.
      */
-    void copy(PointerQueue* destination) {
-        debug (USAGE) printf("<GC> PointerQueue.copy (%p)\n",destination);
+    void copy(PointerQueueT!isRootSet* destination) {
+        debug (USAGE) printf("<GC> PointerQueueT.copy (%p)\n",destination);
         debug (STATS) {
             size_t used = 0;
             if (length > destination.length) {
@@ -275,7 +309,10 @@ struct PointerQueue {
     }
     
     void print(bool tailed=false)(string name="(unnamed)\0") {
-        printf("+--Pointer Queue---\n",this);
+        static if (isRootSet)
+            printf("+--Root Set--------\n");
+        else
+            printf("+--Pointer Queue---\n");
         printf("| Name: %s\n",name.ptr);
         if (root is null) {
             printf("| (empty queue)\n");
@@ -321,7 +358,7 @@ unittest {
     p.enqueue(&c);
     //void** ptrs = cast(void**)clib.malloc(p.length * (void*).sizeof);
     //p.dequeue(ptrs);
-    p.print("p");
+    //p.print("p");
     void*[3] ptrs;
     int i=0;
     p.iter!false((ref ptr) {ptrs[i++] = ptr; return 0;});
@@ -329,16 +366,16 @@ unittest {
     assert(ptrs[1] == &b);
     assert(ptrs[2] == &a);
     p.copy(&q);
-    q.print("q");
+    //q.print("q");
     i=0;
     q.iter!false((ref ptr) {ptrs[i++] = ptr; return 0;});
     assert(ptrs[0] == &c);
     assert(ptrs[1] == &b);
     assert(ptrs[2] == &a);
     p.remove(&b);
-    p.print("p");
+    //p.print("p");
     p.copy(&q);
-    q.print("q");
+    //q.print("q");
     i=0;
     q.iter!false((ref ptr) {ptrs[i++] = ptr; return 0;});
     assert(ptrs[0] == &c);
@@ -346,7 +383,7 @@ unittest {
     p.enqueue(&d);
     //p.enqueue(&e);
     p.copy(&q);
-    q.print("q");
+    //q.print("q");
     i=0;
     q.iter!false((ref ptr) {ptrs[i++] = ptr; return 0;});
     //assert(ptrs[0] == &e);
@@ -360,7 +397,7 @@ unittest {
     p.enqueue(&b);
     p.enqueue(&c);
     p.copy(&q);
-    q.print("q");
+    //q.print("q");
     i=0;
     q.iter!false((ref ptr) {ptrs[i++] = ptr; return 0;});
     //assert(ptrs[0] == &e);
@@ -393,6 +430,7 @@ struct QStateMutex {
     }
     
     bool wait(bool delegate() dg) {
+        debug (USAGE) printf("<GC> QueueStateMutex.wait ()\n");
         _lock();
         waiters++;
         _unlock();
@@ -410,6 +448,7 @@ struct QStateMutex {
     }
     
     bool acquire() {
+        debug (USAGE) printf("<GC> QStateMutex.acquire ()\n");
         bool result;
         while (true) {
             _lock();
@@ -423,12 +462,15 @@ struct QStateMutex {
         }
     }
     bool transfer() {
+        debug (USAGE) printf("<GC> QStateMutex.transfer ()\n");
         return cas(&state, State.BETA, State.GAMMA);
     }
     bool acquire2() {
+        debug (USAGE) printf("<GC> QStateMutex.acquire2 ()\n");
         return cas(&state, State.GAMMA, State.DELTA);
     }
     bool release() {
+        debug (USAGE) printf("<GC> QStateMutex.release ()\n");
         return cas(&state, State.DELTA, State.ALPHA);
     }
     

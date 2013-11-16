@@ -1,6 +1,6 @@
 module gc.t_marker;
 
-debug = VERBOSE;
+//debug = VERBOSE;
 
 import gc.proxy;
 import gc.misc : onGCFatalError, Range, PointerQueue;
@@ -12,14 +12,17 @@ import slib = core.stdc.string : memcpy;
 
 import core.sys.posix.pthread : pthread_exit, sched_yield;
 import core.sys.posix.signal;
+import core.thread;
 
 __gshared GCT marker;
 __gshared byte[__traits(classInstanceSize, GCT)] markerStorage;
 __gshared GCT sweeper;
 __gshared byte[__traits(classInstanceSize, GCT)] sweeperStorage;
 
-__gshared bool sweepCopyDone, sweepFinished;
-__gshared Condition syncCondition1, syncCondition2, syncCondition3;
+__gshared bool sweepCopyDone, sweepFinished, scanFinished, boundsUpdated;
+__gshared Condition syncCondition1, syncCondition2,
+                    syncCondition3, syncCondition4,
+                    syncCondition5;
 
 enum CollectMode {
     OFF, ON, CONTINUE
@@ -36,6 +39,8 @@ void init_workers() {
     sweeper.__ctor("sweeper\0", &sweeper_fn);
     syncCondition1.initialize();
     syncCondition2.initialize();
+    syncCondition3.initialize();
+    syncCondition4.initialize();
 }
 
 //should only be called when the GC is locked
@@ -110,11 +115,14 @@ void marker_fn(GCT myThread) {
         //   scanForPointers(stackptr, stacksz) --> add to rootSet
         
         
+        
+        
+        
         while (!sweepCopyDone) {
             syncCondition1.wait();
         }
         
-        //now it's time to do marking
+        //now it's time to do marking of previous snapshot
         
         debug (VERBOSE) printf("<M> marking\n");
         
@@ -129,7 +137,29 @@ void marker_fn(GCT myThread) {
             rangeptrs.iterDequeue((ptr) { markRecursive(ptr); });
         }
         
-        _gc.rootSet.iter!false((ref ptr) { markRecursive(ptr); return 0;});
+        //wait for the scanner to inform us of stack bounds
+        
+        while (!boundsUpdated) {
+            syncCondition4.wait();
+        }
+        
+        //This goes through the previously gathered root set
+        _gc.rootSetA.iter!true((ref ptr) { markRecursive(ptr); return 0;});
+        
+        //now we wait for the scanner
+        
+        while (!scanFinished) {
+            syncCondition5.wait();
+        }
+        
+        //now we can go through the new root set
+        //this will repeat some, but those regions will have already
+        //been colored and thus will not be expensively explored
+        _gc.rootSetB.iter!true((ref ptr) { markRecursive(ptr); return 0;});
+        
+        //and now flip
+        _gc.rootSetA = _gc.rootSetB;
+        _gc.rootSetB.clear();
         
         /*
          *  Sync
@@ -141,6 +171,8 @@ void marker_fn(GCT myThread) {
         }
         sweepFinished = false;
         sweepCopyDone = false;
+        boundsUpdated = false;
+        scanFinished = false;
         
         debug (VERBOSE) printf("<M> sync complete\n");
         
@@ -262,6 +294,52 @@ void sweeper_fn(GCT myThread) {
     }
 }
 
+/*  The Scanner is responsible for creating a snapshot
+ *  of potential pointers in the stack
+ */ 
+void scanner_fn(GCT myThread) {
+    debug (VERBOSE) scope (exit) printf("<X> exit\n");
+    
+    /*
+     *  Wait
+     */
+     
+    myThread.suspend(() { return (_gc.collectInProgress == CollectMode.OFF); });
+    
+    /*
+     * Scan
+     */
+     
+    //first we need to establish the stack size of each thread
+    //before the marker can go forward with phase 1
+    
+    
+    //suspend all threads
+    //for each thread:
+    //  get stack min/max
+    //set mins/maxes -> rootBounds
+    
+    //notify marker he may proceed
+    boundsUpdated = true;
+    syncCondition4.notify();
+    
+    
+    //for each thread:
+    //  scanForPointers(thread.stacktop, thread.stacksz, &rootSetB);
+    //wake all threads
+    
+    thread_resumeAll();
+    
+    scanFinished = true;
+    syncCondition5.notify();
+    
+    /*
+     * Sync
+     */
+    
+    //no sync is performed, go right to sleep
+    //  we will either be canceled or woken by the marker
+}
 /*
 extern (C) void marker_handler(int sig) nothrow {
     if (sig == SIGUSR2) {

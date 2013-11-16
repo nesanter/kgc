@@ -4,7 +4,7 @@
 
 module gc.marking;
 
-debug = USAGE;
+//debug = USAGE;
 
 import gc.freelists;
 import gc.proxy;

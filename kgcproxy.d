@@ -13,13 +13,16 @@
  */
 module gc.proxy;
 
-debug = USAGE;
+//debug = USAGE;
 
 import gc.gc;
-import gc.misc;
+//import gc.misc;
 //import gc.stats;
 
 import core.stdc.stdlib;
+debug (USAGE) import core.stdc.stdio;
+
+immutable string unknown_fn = "(unnamed)";
 
 package
 {
@@ -201,11 +204,10 @@ extern (C)
         return proxy.gc_clrAttr( p, a );
     }
 
-    void* gc_malloc( size_t sz, uint ba = 0 )
-    {
+    void* gc_malloc( size_t sz, uint ba = 0) {
         if( proxy is null )
-            return _gc.malloc( sz, ba );
-        return proxy.gc_malloc( sz, ba );
+            return _gc.malloc( sz, ba, null );
+        return proxy.gc_malloc( sz, ba);
     }
 
     BlkInfo gc_qalloc( size_t sz, uint ba = 0 )
@@ -217,7 +219,7 @@ extern (C)
             retval.attr = ba;
             return retval;
         }
-        return proxy.gc_qalloc( sz, ba );
+        return proxy.gc_qalloc( sz, ba);
     }
 
     void* gc_calloc( size_t sz, uint ba = 0 )

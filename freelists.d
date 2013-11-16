@@ -11,7 +11,7 @@
 
 module gc.freelists;
 
-debug = USAGE;
+//debug = USAGE;
 version = PTRMAP;
 
 import gc.proxy;
@@ -25,6 +25,7 @@ else debug (USAGE) import core.stdc.stdio : printf;
 
 //this currently uses a very simple method
 //and is not thread-safe
+
 struct Freelist {
     
     struct Region {

@@ -1,20 +1,29 @@
 module gc.gc;
 
-debug = USAGE;
+//debug = USAGE;
 version = SINGLE_COLLECT;
+//version = NOGC;
 
-import gc.misc;
-import gc.freelists;
-import t_main = gc.t_main : yield;
-import gc.t_marker;
-//import gc.t_sweeper;
+enum GCType { NONE, NEW }
+version (NOGC) immutable GCType _gctype = GCType.NONE;
+else immutable GCType _gctype = GCType.NEW;
 
-static import core.memory;
-private alias BlkAttr = core.memory.GC.BlkAttr;
-import core.stdc.stdio;
-import core.sync.mutex;
-import core.sync.semaphore;
-//import core.atomic;
+static if (_gctype == GCType.NEW) {
+    public import gc.misc : BlkInfo;
+    import gc.misc;
+    import gc.freelists;
+    import gc.t_main : yield;
+    import gc.t_marker;
+    import gc.injector;
+    static import core.memory;
+    private alias BlkAttr = core.memory.GC.BlkAttr;
+    import core.stdc.stdio;
+    import core.sync.mutex;
+    import core.sync.semaphore;
+    import slib = core.stdc.string;
+}
+
+debug (USAGE) import core.stdc.stdio;
 
 package {
     extern (C) void onOutOfMemoryError();
@@ -41,18 +50,23 @@ private {
  * 
  */
 
-enum GCType { NONE, NEW }
-immutable GCType _gctype = GCType.NEW;
 
-
-
-static if (_gctype == GCType.NONE)
+static if (_gctype == GCType.NONE) {
     import clib = core.stdc.stdlib;
-static if (_gctype == GCType.NEW) {
-    import slib = core.stdc.string;
+    
+    struct BlkInfo {
+        void*  base;
+        size_t size;
+        uint   attr;
+    }
+    struct Range {
+        void* pbot, ptop;
+    }
+    
+} else static if (_gctype == GCType.NEW) {
+    final class GCMutex : Mutex {}
 }
 
-final class GCMutex : Mutex {}
 
 class KGC
 {    
@@ -61,7 +75,10 @@ class KGC
     
     immutable size_t GC_EXTRA_SIZE = uint.sizeof;
     
-    static if (_gctype == GCType.NEW) {
+    static if (_gctype == GCType.NONE) {
+        __gshared size_t bytesAllocated;
+        __gshared size_t bytesReleased;
+    } else static if (_gctype == GCType.NEW) {
         immutable real GC_FL_BUFFER_INIT = 0.0;
         package {
             __gshared ubyte epoch = 2;
@@ -70,11 +87,12 @@ class KGC
             __gshared PointerMap flCache;
             __gshared PointerQueue freeQueue, miscRootQueue;
             //Ranges are stored in a raw array, not a linked list
-            __gshared Range* ranges;
-            __gshared size_t nranges;
+            __gshared Range* ranges, bounds;
+            __gshared size_t nranges, nbounds;
             
             __gshared Freelist secondaryFL;
-            __gshared PointerQueue miscRootQueueCopy, rootSet;
+            __gshared PointerQueue miscRootQueueCopy;
+            __gshared RootSet rootSetA, rootSetB;
             __gshared Range* rangesCopy;
             __gshared size_t nrangesCopy;
             __gshared bool rangesDirty;
@@ -148,6 +166,8 @@ class KGC
             secondaryFL.initialize(GC_FL_BUFFER_INIT, &flCache);
             freeQueue.initialize();
             miscRootQueue.initialize();
+            rootSetA.initialize();
+            rootSetB.initialize();
             
             init_workers();
         }
@@ -195,7 +215,8 @@ class KGC
             */
             miscRootQueue.freeNodes();
             miscRootQueueCopy.freeNodes();
-            rootSet.freeNodes();
+            rootSetA.freeNodes();
+            rootSetB.freeNodes();
             //clib.free(miscRootQueue);
             if (ranges !is null)
                 clib.free(ranges);
@@ -206,9 +227,10 @@ class KGC
     
     void enable() {
         debug (USAGE) printf("<GC> enable ()\n");
-        
-        mutatorLock.lock();
-        scope (exit) mutatorLock.unlock();
+        static if (_gctype == GCType.NEW) {
+            mutatorLock.lock();
+            scope (exit) mutatorLock.unlock();
+        }
         
         assert(disabled > 0);
         disabled--;
@@ -216,9 +238,10 @@ class KGC
     
     void disable() {
         debug (USAGE) printf("<GC> disable ()\n");
-        
-        mutatorLock.lock();
-        scope (exit) mutatorLock.unlock();
+        static if (_gctype == GCType.NEW) {
+            mutatorLock.lock();
+            scope (exit) mutatorLock.unlock();
+        }
         
         disabled++;
     }
@@ -241,8 +264,8 @@ class KGC
             }
             
             return getBits(p, asz-GC_EXTRA_SIZE);
-        } else
-            return 0;
+        }
+        return 0;
     }
     
     uint setAttr(void* p, uint mask) {
@@ -263,8 +286,8 @@ class KGC
             }
             
             return orBits(p, asz-GC_EXTRA_SIZE, mask);
-        } else
-            return 0;
+        }
+        return 0;
     }
     
     uint clrAttr(void* p, uint mask) {
@@ -285,8 +308,8 @@ class KGC
             }
             
             return andBits(p, asz-GC_EXTRA_SIZE, ~mask);
-        } else
-            return 0;
+        }
+        return 0;
     }
     
     void* malloc(size_t size, uint bits = 0, size_t* alloc_size = null) {
@@ -302,6 +325,13 @@ class KGC
             scope (exit) mutatorLock.unlock();
             
             void* p = primaryFL.grab(size, alloc_size);
+            
+            if (p !is null && (p < minPtr || minPtr is null))
+                minPtr = p;
+            if (p !is null && (p+*alloc_size) > maxPtr)
+                maxPtr = p+*alloc_size;
+            
+            inject_outer(p);
         } else
             void* p = null;
         //set bits
@@ -309,15 +339,12 @@ class KGC
         
         bytesAllocated += *alloc_size;
         
-        if (p !is null && (p < minPtr || minPtr is null))
-            minPtr = p;
-        if (p !is null && (p+*alloc_size) > maxPtr)
-            maxPtr = p+*alloc_size;
+        
         
         return p;
     }
     
-    void* calloc(size_t size, uint bits = 0, size_t* alloc_size = null) {
+    void* calloc(size_t size, uint bits = 0, size_t* alloc_size = null, string fname = __FUNCTION__) {
         debug (USAGE) printf("<GC> calloc (%lu,%u,%p)\n",size,bits,alloc_size);
         static if (_gctype == GCType.NONE) {
             void* p = clib.calloc(1, size);
@@ -355,6 +382,11 @@ class KGC
             setBits(newp, *alloc_size-GC_EXTRA_SIZE, bits);
             
             bytesAllocated += new_alloc_size;
+            
+            /* Not sure if this should inject
+             * or search for an old inject
+             * or what?
+             */
             
             return newp;
         } else
@@ -591,50 +623,61 @@ class KGC
     }
     
     int _rangeIter(int delegate(ref Range) dg) {
-        int result = 0;
-        foreach (i; 0 .. nranges) {
-            result = dg(ranges[i]);
-            if (result) break;
-        }
-        return result;
+        static if (_gctype == GCType.NEW) {
+            int result = 0;
+            foreach (i; 0 .. nranges) {
+                result = dg(ranges[i]);
+                if (result) break;
+            }
+            return result;
+        } else
+            return 0;
     }
     
     bool fullCollect() {
         debug (USAGE) printf("<GC> fullCollect ()\n");
         
-        if (progressLock.inactive) {
-            if (collectInProgress == CollectMode.OFF) {
-                collectInProgress = CollectMode.ON;
-                if (workersActive()) wake_workers();
-                else launch_workers();
-                return true;
+        static if (_gctype == GCType.NEW) {
+            if (progressLock.inactive) {
+                if (collectInProgress == CollectMode.OFF) {
+                    collectInProgress = CollectMode.ON;
+                    if (workersActive()) wake_workers();
+                    else launch_workers();
+                    return true;
+                }
             }
-        }
-        return false;
+            return false;
+        } else
+            assert(0);
     }
     
-    void finalize(void* p, size_t sz) {
-        debug (USAGE) printf("<GC> finalize (%p,%lu)\n",p);
-        if (getBits(p, sz) && BlkAttr.FINALIZE) {
-            rt_finalize2(p, false, false);
+    static if (_gctype == GCType.NEW) {
+        package void finalize(void* p, size_t sz) {
+            debug (USAGE) printf("<GC> finalize (%p,%lu)\n",p);
+            if (getBits(p, sz) && BlkAttr.FINALIZE) {
+                rt_finalize2(p, false, false);
+            }
         }
     }
     
     bool wait(bool full) {
         debug (USAGE) printf("<GC> wait ()\n");
-        if (full) {
-            while (progressLock.wait(() { return collectInProgress != CollectMode.OFF; })) {}
+        static if (_gctype == GCType.NEW) {
+            if (full) {
+                while (progressLock.wait(() { return collectInProgress != CollectMode.OFF; })) {}
+                return true;
+            } else {
+                return progressLock.wait(() { return collectInProgress != CollectMode.OFF; });
+            }
+        } else
             return true;
-        } else {
-            return progressLock.wait(() { return collectInProgress != CollectMode.OFF; });
-        }
     }
     
-    bool collectStartThreshold() {
+    package bool collectStartThreshold() {
         return (bytesAllocated-bytesReleased) > collectStartThreshold;
     }
     
-    bool collectStopThreshold() {
+    package bool collectStopThreshold() {
         version (SINGLE_COLLECT) {
             return false;
         } else {
@@ -658,7 +701,11 @@ class KGC
     size_t getBytesAllocated() {
         return bytesAllocated;
     }
+    size_t getBytesReleased() {
+        return bytesReleased;
+    }
     
+
     private void setBits(void* p, size_t sz, uint bits) {
         *cast(uint*)(p+sz) = bits;
     }

@@ -1,6 +1,6 @@
 module gc.t_main;
 
-debug = USAGE;
+//debug = USAGE;
 
 /* Threading facility for KGC
  * 
@@ -25,6 +25,8 @@ import core.sys.posix.stdlib;
 import core.sys.posix.pthread;
 import core.sys.posix.signal;
 import core.sys.posix.time;
+version (linux)
+    extern (C) int pthread_getattr_np(pthread_t thread, pthread_attr_t* attr);
 
 /* This does not create TLS for the thread
  * This does not set up a stack to be scanned
@@ -63,12 +65,24 @@ extern (C) void* gct_entrypoint(void* arg) {
 
     //disable wake signal before we are RUNNING
     signal(SIGUSR1, &handle_wake);
-        
+    
     obj.status = LaunchStatus.RUNNING;
     
     //setup for suspending via .suspend()
     sigemptyset(&obj.suspendSet);
     sigaddset(&obj.suspendSet, SIGUSR1);
+    
+    /*
+    //find stack
+    pthread_attr_t attr;
+    void* addr;
+    ulong ss;
+    pthread_getattr_np(obj.addr,&attr);
+    pthread_attr_getstack(&attr,&addr, &ss);
+    pthread_attr_destroy(&attr);
+    obj.bottom = addr+ss;
+    obj.top = getStackTop();
+    */
     
     obj.run(obj);
     
@@ -92,6 +106,7 @@ final class GCT {
     private void function(GCT) run;
     private sigset_t suspendSet, oldSet;
     private size_t critical;
+    void* top, bottom;
     
     this(const(char*) n, void function(GCT) fn) {
         run = fn;
@@ -235,9 +250,13 @@ unittest {
     dummy.launch();
     while (!dummy.suspended) {}
     dummy.wake();
+    
+    
+    
     dummy.join(false);
     
     gcAssert(testflag == 2);
+    
     
     printf("---end unittest---\n");
 }
