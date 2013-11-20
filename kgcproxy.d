@@ -18,6 +18,7 @@ module gc.proxy;
 import gc.gc;
 //import gc.misc;
 //import gc.stats;
+import gc.grapher;
 
 import core.stdc.stdlib;
 debug (USAGE) import core.stdc.stdio;
@@ -205,6 +206,7 @@ extern (C)
     }
 
     void* gc_malloc( size_t sz, uint ba = 0) {
+        graph_add_fname();
         if( proxy is null )
             return _gc.malloc( sz, ba, null );
         return proxy.gc_malloc( sz, ba);

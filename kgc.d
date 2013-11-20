@@ -80,7 +80,7 @@ class KGC
         __gshared size_t bytesReleased;
     } else static if (_gctype == GCType.NEW) {
         immutable real GC_FL_BUFFER_INIT = 0.0;
-        package {
+        public {
             __gshared ubyte epoch = 2;
             __gshared Freelist primaryFL;
             __gshared void* minPtr, maxPtr;
@@ -324,14 +324,15 @@ class KGC
             mutatorLock.lock();
             scope (exit) mutatorLock.unlock();
             
-            void* p = primaryFL.grab(size, alloc_size);
+            Freelist.Region* rp;
+            void* p = primaryFL.grab(size, alloc_size, &rp);
             
             if (p !is null && (p < minPtr || minPtr is null))
                 minPtr = p;
             if (p !is null && (p+*alloc_size) > maxPtr)
                 maxPtr = p+*alloc_size;
             
-            inject_outer(p);
+            inject_outer(rp);
         } else
             void* p = null;
         //set bits
@@ -505,7 +506,9 @@ class KGC
     
     BlkInfo query(void* p) {
         debug (USAGE) printf("<GC> query (%p)\n",p);
-        return BlkInfo.init;
+        auto rp = primaryFL.regionOf(p);
+        if (rp is null) return BlkInfo.init;
+        return BlkInfo(rp.ptr, rp.capacity, getBits(rp.ptr, rp.capacity));
     }
     
     void check(void* p) {
@@ -736,7 +739,7 @@ class KGC
                 case CollectMode.CONTINUE: printf("| COLLECT: CONTINUE\n"); break;
                 case CollectMode.ON: printf("| COLLECT: ON\n"); break;
             }
-            printf("| NRANGES: %lu\n",nranges);
+            printf("| NRANGES: %lu (%lu bytes)\n",nranges,getRangesSize());
             printf("+-------------\n");
             primaryFL.print();
             printf("+-------------\n");

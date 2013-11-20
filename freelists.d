@@ -17,8 +17,10 @@ version = PTRMAP;
 import gc.proxy;
 import gc.misc : gcAssert, onGCFatalError;
 import gc.gc : onOutOfMemoryError, onInvalidMemoryOperationError, KGC, mem_free, mem_alloc;
+import gc.marking : potentialPointer;
 //import clib = core.stdc.stdlib;
 import slib = core.stdc.string;
+import clib = core.stdc.stdlib;
 
 version (unittest) import core.stdc.stdio : printf;
 else debug (USAGE) import core.stdc.stdio : printf;
@@ -33,6 +35,54 @@ struct Freelist {
         ubyte color;
         size_t size, capacity;
         Region* prev, prev2;
+        
+        Region** connections;
+        size_t nconnections;
+        
+        bool fake_free;
+        
+        this(void* ptr, size_t size, size_t capacity, Region* prev) {
+            this.ptr = ptr;
+            this.color = _gc.epoch % 3;
+            this.size = size;
+            this.capacity = capacity;
+            this.prev = prev;
+            this.prev2 = null;
+            this.connections = null;
+            this.nconnections = 0;
+            this.fake_free = false;
+        }
+        
+        void addConnection(Region* r) {
+            printf("add %p\n",r);
+            printf("this = %p\n",this);
+            printf("connections = %p (%lu)\n",connections,nconnections);
+            if (connections is null)
+                connections = cast(Region**)clib.malloc((Region*).sizeof);
+            else
+                connections = cast(Region**)clib.realloc(connections, (nconnections+1) * (Region*).sizeof);
+            connections[nconnections++] = r;
+        }
+        
+        void updateConnections(Freelist* f) {
+            //printf("here (%p)\n",this);
+            if (color == _gc.epoch % 3) return;
+            color = _gc.epoch % 3;
+            size_t found;
+            for (void** p=cast(void**)ptr; p<ptr+size; ++p) {
+                if (potentialPointer(*p)) {
+                    Region* rp = f.regionOf(*p);
+                    if (rp !is null) {
+                        if (found >= nconnections)
+                            connections = cast(Region**)clib.realloc(connections, (found+1)*(Region*).sizeof);
+                        connections[found++] = rp;
+                    }
+                }
+            }
+            nconnections = found;
+            for (int i=0; i<nconnections; ++i)
+                connections[i].updateConnections(f);
+        }
     }
     
     Region* tail;
@@ -54,7 +104,7 @@ struct Freelist {
     }
     
     //always uses primary
-    void* grab(size_t sz, size_t* alloc_size = null) {
+    void* grab(size_t sz, size_t* alloc_size = null, Region** rp=null) {
         debug (USAGE) printf("<GC> Freelist.grab (%lu,%p)\n",sz,alloc_size);
         size_t bytes = cast(size_t)(sz * buffer)+KGC.GC_EXTRA_SIZE;
         
@@ -64,7 +114,7 @@ struct Freelist {
             tail = cast(Region*)mem_alloc(Region.sizeof);
             if (tail is null)
                 onOutOfMemoryError();
-            *tail = Region(mem_alloc(bytes), _gc.epoch % 3, sz, bytes, null, null);
+            *tail = Region(mem_alloc(bytes), sz, bytes, null);
             if (tail.ptr is null)
                 onOutOfMemoryError();
             if (alloc_size != null)
@@ -72,6 +122,7 @@ struct Freelist {
             version (unittest) length++;
             //printf("malloc'd %p\n",tail.ptr);
             version (PTRMAP) pm.add(tail.ptr, tail);
+            if (rp !is null) *rp = tail;
             return tail.ptr;
         }
         
@@ -84,6 +135,7 @@ struct Freelist {
                     *alloc_size += r.capacity;
                 //printf("malloc'd %p\n",r.ptr);
                 version (PTRMAP) pm.add(r.ptr, r);
+                if (rp !is null) *rp = r;
                 return r.ptr;
             }
             
@@ -96,7 +148,7 @@ struct Freelist {
         r = cast(Region*)mem_alloc(Region.sizeof);
         if (r is null)
             onOutOfMemoryError();
-        *r = Region(mem_alloc(bytes), _gc.epoch % 3, sz, bytes, tail, null);
+        *r = Region(mem_alloc(bytes), sz, bytes, tail);
         if (r.ptr is null)
             onOutOfMemoryError();
         tail = r;
@@ -107,6 +159,7 @@ struct Freelist {
         version (unittest) length++;
         //printf("malloc'd %p\n",tail.ptr);
         version (PTRMAP) pm.add(tail.ptr, tail);
+        if (rp !is null) *rp = r;
         return tail.ptr;
     }
     
@@ -117,6 +170,7 @@ struct Freelist {
         while (r !is null) {
             if (r.ptr == p)
                 return r.size;
+            r = r.prev;
         }
         return 0;
     }
@@ -128,6 +182,7 @@ struct Freelist {
         while (r !is null) {
             if (r.ptr == p)
                 return r.capacity;
+            r = r.prev;
         }
         return 0;
     }
@@ -139,6 +194,7 @@ struct Freelist {
         while (r !is null) {
             if (r.ptr == p)
                 return r;
+            r = r.prev;
         }
         return null;
     }
@@ -219,7 +275,7 @@ struct Freelist {
     
     //uses secondary
     void freeSweep(size_t* free_size) {
-        debug (USAGE) printf("<GC> Freelist.freeSweep (%p,%p)\n",free_size);
+        debug (USAGE) printf("<GC> Freelist.freeSweep (%p)\n",free_size);
         Region* r = tail;
         size_t freed;
         ubyte free_color = (_gc.epoch-2)%3;
@@ -233,9 +289,19 @@ struct Freelist {
         }
         if (free_size !is null)
             *free_size += freed;
-        tail = null;
+        //tail = null;
     }
     
+    void fakeSweep() {
+        debug (USAGE) printf("<GC> Freelist.fakeSweep ()\n");
+        Region* r = tail;
+        ubyte free_color = (_gc.epoch-2)%3;
+        while (r !is null) {
+            if (r.color == free_color)
+                r.fake_free = true;
+            r = r.prev;
+        }
+    }
     
     // This used to be called but is now only used in the unittest
     void freeAll() {
@@ -317,6 +383,28 @@ struct Freelist {
         return null;
     }
     
+    size_t regionID(Region* r) {
+        Region* rp = tail;
+        size_t i;
+        while (rp !is null) {
+            if (rp == r)
+                return i;
+            i++;
+            rp = rp.prev;
+        }
+        return size_t.max;
+    }
+    
+    @property size_t numRegions() {
+        size_t i;
+        Region* r = tail;
+        while (r !is null) {
+            i++;
+            r = r.prev;
+        }
+        return i;
+    }
+    
     //uses primary
     size_t extend(void* p, size_t minamt, size_t maxamt, bool* fail) {
         //fail is set if there is not enough room to extend
@@ -367,6 +455,19 @@ struct Freelist {
         return null;
     }
     
+    void updateConnections() {
+        Region* r = tail;
+        size_t found;
+        while (r !is null) {
+            if (r.color != _gc.epoch % 3) {
+                
+                
+            }
+            r = r.prev;
+        }
+        
+    }
+    
     void print() {
         if (tail == null) printf("(nil)\n");
         Region* r = tail;
@@ -375,15 +476,15 @@ struct Freelist {
         ubyte grey_color = (_gc.epoch-1) % 3;
         while (r !is null) {
             if (pm.query(r.ptr) !is null)
-                printf("| %lu - %lu bytes of %lu (%c) [M]\n",i,
+                printf("| %lu - %p - %lu bytes of %lu (%c) [M]\n",i,r,
                         (r.size == 0) ? 0 : r.size+_gc.GC_EXTRA_SIZE, r.capacity,
-                        (r.size == 0) ? '-' : ((r.color == white_color) ? 'W' :
+                        (r.size == 0 || r.fake_free) ? '-' : ((r.color == white_color) ? 'W' :
                         ((r.color == grey_color) ? 'G' : 'B'))
                     );
             else
-                printf("| %lu - %lu bytes of %lu (%c)\n",i,
+                printf("| %lu - %p - %lu bytes of %lu (%c)\n",i,r,
                         (r.size == 0) ? 0 : r.size+_gc.GC_EXTRA_SIZE, r.capacity,
-                        (r.size == 0) ? '-' : ((r.color == white_color) ? 'W' :
+                        (r.size == 0 || r.fake_free) ? '-' : ((r.color == white_color) ? 'W' :
                         ((r.color == grey_color) ? 'G' : 'B'))
                     );
             r = r.prev;

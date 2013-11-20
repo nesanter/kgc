@@ -9,6 +9,8 @@ module gc.marking;
 import gc.freelists;
 import gc.proxy;
 import gc.misc;
+import gc.injector;
+import core.stdc.stdlib : abort;
 
 //Scan a region for pointers
 void scanForPointers(void* ptr, size_t sz, PointerQueue* q) {
@@ -43,4 +45,27 @@ void markRecursive(void* root) {
 
 bool potentialPointer(void* p) {
     return p >= _gc.minPtr && p < _gc.maxPtr;
+}
+
+void incrementEpoch() {
+    _gc.epoch++;
+}
+
+//increment the epoch before calling this
+void verifyRecursive(InjectorData* fndatahead, Freelist* fl) {
+    InjectorData* idata = fndatahead;
+    while (idata !is null) {
+        for (int i=0; i<idata.npayloads; ++i)
+            idata.payload[i].updateConnections(fl);
+        idata = idata.prev;
+    }
+    
+    Freelist.Region** globs;
+    
+    size_t nglobs = injector_scan_globals(&globs);
+    
+    for (int i=0; i<nglobs; ++i) {
+        globs[i].updateConnections(fl);
+    }
+    
 }

@@ -68,6 +68,13 @@ void* getStackTop() {
     asm { naked; mov RAX, RSP; ret; }
 }
 
+size_t getRangesSize() {
+    size_t sz = 0;
+    for (int i=0; i<_gc.nranges; ++i)
+        sz += _gc.ranges[i].ptop - _gc.ranges[i].pbot;
+    return sz;
+}
+
 alias PointerQueueT!false PointerQueue;
 alias PointerQueueT!true RootSet;
 
