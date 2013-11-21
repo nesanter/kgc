@@ -22,8 +22,6 @@ import gc.gc;
 import core.stdc.stdlib;
 debug (USAGE) import core.stdc.stdio;
 
-immutable string unknown_fn = "(unnamed)";
-
 package
 {
     alias KGC gc_t;
