@@ -189,7 +189,8 @@ extern (C) void inject_restore(void** target, void* rv_ax, void* rv_dx) {
         slib.memcpy(new_payloads, injector_head.payload, injector_head.npayloads * injector_payload_t.sizeof);
         
         if (rvroots[0] !is null) new_payloads[injector_head.npayloads] = rvroots[0];
-        if (rvroots[1] !is null) new_payloads[injector_head.npayloads+1] = rvroots[1];
+        if (rvroots[1] !is null) new_payloads[injector_head.npayloads +
+                                    (rvroots[0] !is null : 1 : 0)] = rvroots[1];
         
         inject_outer_2(new_payloads, injector_head.npayloads +
             (rvroots[0] !is null ? 1 : 0) +
@@ -261,14 +262,15 @@ size_t injector_scan(injector_payload_t** dest, size_t back, size_t depth) {
 
 size_t injector_scan_globals(injector_payload_t** dest, injector_payload_t* rvroots = null, void* rv_ax = null, void* rv_dx = null) {
     size_t g = 0;
-    for (int r=0; r<_gc.nranges; ++r) {
-        if (rv_ax >= _gc.ranges[r].pbot && rv_ax <= _gc.ranges[r].ptop) {
+    
+    void dg(void* pbot, void* ptop) {
+        if (rv_ax >= pbot && rv_ax <= ptop) {
             rvroots[0] = _gc.primaryFL.regionOf(*cast(void**)rv_ax);
         }
-        if (rv_dx >= _gc.ranges[r].pbot && rv_dx <= _gc.ranges[r].ptop) {
+        if (rv_dx >= pbot && rv_dx <= ptop) {
             rvroots[1] = _gc.primaryFL.regionOf(*cast(void**)rv_ax);
         }
-        for (void** ptr=cast(void**)_gc.ranges[r].pbot; ptr<=_gc.ranges[r].ptop; ++ptr) {
+        for (void** ptr=cast(void**)pbot; ptr<=ptop; ++ptr) {
             if (potentialPointer(*ptr)) {
                 injector_payload_t pp = _gc.primaryFL.regionOf(*ptr);
                 if (pp !is null) {
@@ -280,7 +282,16 @@ size_t injector_scan_globals(injector_payload_t** dest, injector_payload_t* rvro
             }
         }
     }
-    debug (USAGE) printf("%lu globals found\n",g);
+    
+    for (int r=0; r<_gc.nranges; ++r) {
+        dg(_gc.ranges[r].pbot, _gc.ranges[r].ptop);
+    }
+    
+    debug (USAGE) printf("%lu globals found (__gshared only)\n",g);
+    
+    //core.thread.scanTLS(&dg);
+    
+    debug (USAGE) printf("%lu globals found (TLS + __gshared)\n",g);
     return g;
 }
 

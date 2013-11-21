@@ -22,8 +22,7 @@ import gc.util.marking : potentialPointer;
 import slib = core.stdc.string;
 import clib = core.stdc.stdlib;
 
-version (unittest) import core.stdc.stdio : printf;
-else debug (USAGE) import core.stdc.stdio : printf;
+import core.stdc.stdio : printf;
 
 //this currently uses a very simple method
 //and is not thread-safe
@@ -54,9 +53,9 @@ struct Freelist {
         }
         
         void addConnection(Region* r) {
-            printf("add %p\n",r);
-            printf("this = %p\n",this);
-            printf("connections = %p (%lu)\n",connections,nconnections);
+            //printf("add %p\n",r);
+            //printf("this = %p\n",this);
+            //printf("connections = %p (%lu)\n",connections,nconnections);
             if (connections is null)
                 connections = cast(Region**)clib.malloc((Region*).sizeof);
             else
@@ -69,7 +68,7 @@ struct Freelist {
             if (color == _gc.epoch % 3) return;
             color = _gc.epoch % 3;
             size_t found;
-            for (void** p=cast(void**)ptr; p<ptr+size; ++p) {
+            for (void** p=cast(void**)ptr; p<=ptr+size; ++p) {
                 if (potentialPointer(*p)) {
                     Region* rp = f.regionOf(*p);
                     if (rp !is null) {
@@ -88,7 +87,7 @@ struct Freelist {
     Region* tail;
     
     //cannot allocate into free space with more than MAX_WASTE unused bytes
-    immutable size_t MAX_WASTE = 256;
+    enum size_t MAX_WASTE = 256;
     
     real buffer; //amount to over-allocate
     
@@ -97,7 +96,7 @@ struct Freelist {
     version (PTRMAP) PointerMap* pm;
     
     void initialize(real buf, PointerMap* p) {
-        gcAssert(buf >= 0);
+        version (assert) gcAssert(buf >= 0);
         buffer = (1+buf);
         tail = null;
         pm = p;
@@ -455,19 +454,6 @@ struct Freelist {
         return null;
     }
     
-    void updateConnections() {
-        Region* r = tail;
-        size_t found;
-        while (r !is null) {
-            if (r.color != _gc.epoch % 3) {
-                
-                
-            }
-            r = r.prev;
-        }
-        
-    }
-    
     void print() {
         if (tail == null) printf("(nil)\n");
         Region* r = tail;
@@ -478,13 +464,13 @@ struct Freelist {
             if (pm.query(r.ptr) !is null)
                 printf("| %lu - %p - %lu bytes of %lu (%c) [M]\n",i,r,
                         (r.size == 0) ? 0 : r.size+_gc.GC_EXTRA_SIZE, r.capacity,
-                        (r.size == 0 || r.fake_free) ? '-' : ((r.color == white_color) ? 'W' :
+                        (r.size == 0 || r.fake_free) ? (r.size == 0 ? '-' : '*') : ((r.color == white_color) ? 'W' :
                         ((r.color == grey_color) ? 'G' : 'B'))
                     );
             else
                 printf("| %lu - %p - %lu bytes of %lu (%c)\n",i,r,
                         (r.size == 0) ? 0 : r.size+_gc.GC_EXTRA_SIZE, r.capacity,
-                        (r.size == 0 || r.fake_free) ? '-' : ((r.color == white_color) ? 'W' :
+                        (r.size == 0 || r.fake_free) ? (r.size == 0 ? '-' : '*') : ((r.color == white_color) ? 'W' :
                         ((r.color == grey_color) ? 'G' : 'B'))
                     );
             r = r.prev;

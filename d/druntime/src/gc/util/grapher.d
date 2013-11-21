@@ -355,7 +355,7 @@ private void graph_set_alive(Node* node, bool verify) {
 
 version (GCOUT) {
     void graph_output_dot(InjectorData* fnhead, Freelist* fl, InjectorData* deadhead = null) {
-        printf("begin\n");
+        //printf("begin\n");
         fprintf(grapher_out, "subgraph cluster_G%lu {\n",grapher_out_count++);
         Freelist.Region** visited;
         size_t nvisited;
@@ -406,7 +406,7 @@ version (GCOUT) {
         fprintf(grapher_out, "}\n");
         nodeid += fl.numRegions;
         fnidbase += fnidnum;
-        printf("done\n");
+        //printf("done\n");
     }
 
     private void graph_output_node(Freelist.Region* r, Freelist* fl, Freelist.Region*** visited, size_t* nvisited) {

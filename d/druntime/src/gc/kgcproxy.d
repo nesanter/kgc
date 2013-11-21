@@ -16,7 +16,7 @@ module gc.proxy;
 //debug = USAGE;
 
 import gc.gc;
-//import gc.misc;
+import gc.misc : BlkInfo;
 //import gc.stats;
 
 import core.stdc.stdlib;

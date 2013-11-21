@@ -72,13 +72,13 @@ class KGC
     
     size_t disabled;
     
-    immutable size_t GC_EXTRA_SIZE = uint.sizeof;
+    enum size_t GC_EXTRA_SIZE = uint.sizeof;
     
     static if (_gctype == GCType.NONE) {
         __gshared size_t bytesAllocated;
         __gshared size_t bytesReleased;
     } else static if (_gctype == GCType.NEW) {
-        immutable real GC_FL_BUFFER_INIT = 0.0;
+        enum real GC_FL_BUFFER_INIT = 0.0;
         public {
             __gshared ubyte epoch = 2;
             __gshared Freelist primaryFL;
@@ -129,8 +129,8 @@ class KGC
             //these control the threshold
             __gshared size_t bytesAllocated; //this must only increase
             __gshared size_t bytesReleased; //ditto
-            immutable size_t collectStart = 4000;
-            immutable size_t collectStop = 3500;
+            enum size_t collectStart = 4000;
+            enum size_t collectStop = 3500;
             
         }
     }
@@ -249,6 +249,7 @@ class KGC
         debug (USAGE) printf("<GC> getAttr (%p)\n",p);
         static if (_gctype == GCType.NONE) {
             onInvalidMemoryOperationError();
+            return 0;
         } else static if (_gctype == GCType.NEW) {
             
             size_t asz;
@@ -263,14 +264,15 @@ class KGC
             }
             
             return getBits(p, asz-GC_EXTRA_SIZE);
-        }
-        return 0;
+        } else
+            return 0;
     }
     
     uint setAttr(void* p, uint mask) {
         debug (USAGE) printf("<GC> setAttr (%p,%u)\n",p,mask);
         static if (_gctype == GCType.NONE) {
             onInvalidMemoryOperationError();
+            return 0;
         } else static if (_gctype == GCType.NEW) {
             
             size_t asz;
@@ -285,14 +287,15 @@ class KGC
             }
             
             return orBits(p, asz-GC_EXTRA_SIZE, mask);
-        }
-        return 0;
+        } else
+            return 0;
     }
     
     uint clrAttr(void* p, uint mask) {
         debug (USAGE) printf("<GC> clrAttr (%p,%u)\n",p,mask);
         static if (_gctype == GCType.NONE) {
             onInvalidMemoryOperationError();
+            return 0;
         } else static if (_gctype == GCType.NEW) {
 
             size_t asz;
@@ -307,8 +310,8 @@ class KGC
             }
             
             return andBits(p, asz-GC_EXTRA_SIZE, ~mask);
-        }
-        return 0;
+        } else
+            return 0;
     }
     
     void* malloc(size_t size, uint bits = 0, size_t* alloc_size = null) {
@@ -331,7 +334,8 @@ class KGC
             if (p !is null && (p+*alloc_size) > maxPtr)
                 maxPtr = p+*alloc_size;
             
-            inject_outer(rp);
+            if (disabled == 0)
+                inject_outer(rp);
         } else
             void* p = null;
         //set bits
@@ -559,8 +563,8 @@ class KGC
         debug (USAGE) printf("<GC> rootIter ()\n");
         static if (_gctype == GCType.NEW) {
             return &miscRootQueue.iter!true;
-        }
-        return null;
+        } else
+            return null;
     }
         
     void addRange(void* p, size_t sz) {
@@ -620,8 +624,8 @@ class KGC
         debug (USAGE) printf("<GC> rangeIter ()\n");
         static if (_gctype == GCType.NEW) {
             return &_rangeIter;
-        }
-        return null;
+        } else
+            return null;
     }
     
     int _rangeIter(int delegate(ref Range) dg) {
