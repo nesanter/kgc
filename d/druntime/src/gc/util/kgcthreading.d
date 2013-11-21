@@ -1,4 +1,4 @@
-module gc.t_main;
+module gc.util.t_main;
 
 //debug = USAGE;
 
@@ -8,7 +8,7 @@ module gc.t_main;
  * 
  */ 
 
-import gc.misc : onGCFatalError, gcAssert;
+import gc.util.misc : onGCFatalError, gcAssert;
 import core.stdc.stdio;
 
 version (Posix) { 

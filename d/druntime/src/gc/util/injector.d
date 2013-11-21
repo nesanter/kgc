@@ -1,4 +1,4 @@
-module gc.injector;
+module gc.util.injector;
 
 debug = USAGE;
 version = GCOUT;
@@ -9,10 +9,10 @@ import core.stdc.stdio;
 import core.stdc.stdlib;
 import slib = core.stdc.string;
 
-import gc.grapher;
-import gc.marking;
+import gc.util.grapher;
+import gc.util.marking;
 import gc.proxy;
-import gc.freelists;
+import gc.util.freelists;
 
 __gshared bool KEEP_INJECTING;
 __gshared bool HEAP_SCAN_ON;

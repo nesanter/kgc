@@ -1,4 +1,4 @@
-module gc.grapher;
+module gc.util.grapher;
 
 /*
  *  Experimental connection graphing system
@@ -12,8 +12,8 @@ import clib = core.stdc.stdlib;
 import core.stdc.stdio;
 import gc.proxy;
 //import gc.marking;
-import gc.injector;
-import gc.freelists;
+import gc.util.injector;
+import gc.util.freelists;
 
 /+
 enum NodeType { NULL, HEAP, FN, GLOB }

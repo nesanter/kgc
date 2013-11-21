@@ -9,15 +9,15 @@
  *  
  */
 
-module gc.freelists;
+module gc.util.freelists;
 
 //debug = USAGE;
 version = PTRMAP;
 
 import gc.proxy;
-import gc.misc : gcAssert, onGCFatalError;
+import gc.util.misc : gcAssert, onGCFatalError;
 import gc.gc : onOutOfMemoryError, onInvalidMemoryOperationError, KGC, mem_free, mem_alloc;
-import gc.marking : potentialPointer;
+import gc.util.marking : potentialPointer;
 //import clib = core.stdc.stdlib;
 import slib = core.stdc.string;
 import clib = core.stdc.stdlib;

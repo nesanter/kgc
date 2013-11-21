@@ -2,14 +2,14 @@
  *  Marking routines
  */
 
-module gc.marking;
+module gc.util.marking;
 
 //debug = USAGE;
 
-import gc.freelists;
+import gc.util.freelists;
 import gc.proxy;
-import gc.misc;
-import gc.injector;
+import gc.util.misc;
+import gc.util.injector;
 import core.stdc.stdlib : abort;
 
 //Scan a region for pointers

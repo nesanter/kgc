@@ -1,4 +1,4 @@
-module gc.misc;
+module gc.util.misc;
 
 //debug = USAGE;
 debug = STATS;
@@ -6,7 +6,7 @@ debug = STATS;
 import clib = core.stdc.stdlib;
 import gc.gc : onOutOfMemoryError;
 import gc.proxy;
-import gc.t_main;
+import gc.util.t_main;
 import core.sys.posix.signal;
 import core.atomic;
 version (unittest) import core.stdc.stdio : printf;

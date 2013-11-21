@@ -1,11 +1,11 @@
-module gc.t_marker;
+module gc.util.t_marker;
 
 //debug = VERBOSE;
 
 import gc.proxy;
-import gc.misc : onGCFatalError, Range, PointerQueue;
-import gc.t_main;
-import gc.marking;
+import gc.util.misc : onGCFatalError, Range, PointerQueue;
+import gc.util.t_main;
+import gc.util.marking;
 import core.stdc.stdio;
 import clib = core.stdc.stdlib;
 import slib = core.stdc.string : memcpy;
