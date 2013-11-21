@@ -1,1 +1,1 @@
-dmd -gs -gc -unittest -wi -Id/druntime/import -Id/phobos -debuglib=libphobos2-kgc.so gctester.d
+dmd -Id/druntime/import -Id/phobos -debuglib=libphobos2-kgc.so %1
