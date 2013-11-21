@@ -1,0 +1,5 @@
+cd d/druntime
+make -f posix.mak
+cd ../phobos
+make -f posix.mak
+echo libphobos2-kgc is located in d/phobos/lib/
