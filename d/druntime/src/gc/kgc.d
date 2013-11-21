@@ -9,12 +9,11 @@ version (NOGC) immutable GCType _gctype = GCType.NONE;
 else immutable GCType _gctype = GCType.NEW;
 
 static if (_gctype == GCType.NEW) {
-    public import gc.misc : BlkInfo;
-    import gc.misc;
-    import gc.freelists;
-    import gc.t_main : yield;
-    import gc.t_marker;
-    import gc.injector;
+    import gc.util.misc;
+    import gc.util.freelists;
+    import gc.util.t_main : yield;
+    import gc.util.t_marker;
+    import gc.util.injector;
     static import core.memory;
     private alias BlkAttr = core.memory.GC.BlkAttr;
     import core.stdc.stdio;

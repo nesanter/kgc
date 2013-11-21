@@ -1,1 +1,1 @@
-dmd -gs -gc -unittest gctester.d kgc.d kgcmisc.d kgcproxy.d freelists.d kgcworker.d kgcthreading.d kgcmarking.d injector.d grapher.d
+dmd -gs -gc -unittest -wi -Id/druntime/import -Id/phobos -debuglib=libphobos2-kgc.so gctester.d

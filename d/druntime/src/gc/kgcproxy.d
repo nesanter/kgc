@@ -18,7 +18,6 @@ module gc.proxy;
 import gc.gc;
 //import gc.misc;
 //import gc.stats;
-import gc.grapher;
 
 import core.stdc.stdlib;
 debug (USAGE) import core.stdc.stdio;
@@ -69,6 +68,7 @@ package
             bool function(bool) gc_wait;
             
             void function() gc_dump;
+            void function() gc_register_fn;
         }
     }
 
@@ -109,6 +109,7 @@ package
         pthis.gc_wait = &gc_wait;
         
         pthis.gc_dump = &gc_dump;
+        pthis.gc_register_fn = &gc_register_fn;
     }
 }
 
@@ -377,6 +378,14 @@ extern (C)
             _gc.dump();
         } else {
             proxy.gc_dump();
+        }
+    }
+    
+    void gc_register_fn() {
+        if (proxy is null) {
+            _gc.register_fn();
+        } else {
+            proxy.register_fn();
         }
     }
 
