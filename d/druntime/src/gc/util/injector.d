@@ -1,9 +1,9 @@
 module gc.util.injector;
 
-debug = USAGE;
-version = GCOUT;
-version = TRACK_DEAD_FN;
-version = TRACK_FN_CONS;
+//debug = USAGE;
+//version = GCOUT;
+//version = TRACK_DEAD_FN;
+//version = TRACK_FN_CONS;
 
 import core.stdc.stdio;
 import core.stdc.stdlib;
@@ -20,14 +20,14 @@ __gshared void** BACKSCAN_MAX;
 
 alias Freelist.Region* injector_payload_t;
 immutable size_t injector_alloc_num = 2;
-version (TRACK_FN_CONS) size_t fnidnum;
+version (GRAPH_FULL) size_t fnidnum;
 
 struct InjectorData {
     void* return_ptr;
     injector_payload_t* payload;
     size_t npayloads, psz;
     InjectorData* prev;
-    version (TRACK_FN_CONS) {
+    version (GRAPH_FULL) {
         InjectorData* caller;
     }
     version (GCOUT) {
@@ -113,7 +113,7 @@ extern (C) void inject_set_payload(injector_payload_t payload, void** target) {
     }
     
     //graph_add_child(NodeType.HEAP, payload, n);
-    if (HEAP_SCAN_ON) {
+    //if (HEAP_SCAN_ON) {
         injector_payload_t* potential_roots;
         injector_payload_t* potential_globals;
         //start scanning at target
@@ -128,7 +128,7 @@ extern (C) void inject_set_payload(injector_payload_t payload, void** target) {
             potential_globals[i].addConnection(payload);
             payload.addConnection(potential_globals[i]);
         }
-    }
+    //}
     
 }
 
@@ -136,7 +136,7 @@ extern (C) void inject_set_payload(injector_payload_t payload, void** target) {
 extern (C) void inject_set_payload_2(injector_payload_t* payload, size_t npayloads, InjectorData* prevptr, void** target) {
     debug (USAGE) printf("Propogating into %p @ %p\n",*target,target);
     
-    version (TRACK_FN_CONS) InjectorData* fnptr;
+    version (GRAPH_FULL) InjectorData* fnptr;
     if (*target == &injected_fn) {
         //already injected
         /*
@@ -151,17 +151,17 @@ extern (C) void inject_set_payload_2(injector_payload_t* payload, size_t npayloa
         slib.memcpy(cast(void*)injector_head.prev.payload + injector_head.prev.npayloads * injector_payload_t.sizeof, payload, npayloads * injector_payload_t.sizeof);
         injector_head.prev.psz += npayloads;
         injector_head.prev.npayloads += npayloads;
-        version (TRACK_FN_CONS) fnptr = injector_head.prev;
+        version (GRAPH_FULL) fnptr = injector_head.prev;
     } else {
         //create new data (insert behind current)
         InjectorData* tmp = cast(InjectorData*)malloc(InjectorData.sizeof);
         *tmp = InjectorData(*target, payload, 1, injector_alloc_num, injector_head.prev, null, fnidnum++);
         injector_head.prev = tmp;
         //install injected_fn
-        version (TRACK_FN_CONS) fnptr = tmp;
+        version (GRAPH_FULL) fnptr = tmp;
         *target = &injected_fn;
     }
-    version (TRACK_FN_CONS) prevptr.caller = fnptr;
+    version (GRAPH_FULL) prevptr.caller = fnptr;
 }
 
 extern (C) void inject_restore(void** target, void* rv_ax, void* rv_dx) {
@@ -171,7 +171,7 @@ extern (C) void inject_restore(void** target, void* rv_ax, void* rv_dx) {
     //print debug message
     debug (USAGE) printf("How'd a snrk get in %p @ %p?\n",injector_head.return_ptr,target);
     
-    printf("rv_ax = %p, rv_dx = %p\n",rv_ax,rv_dx);
+    debug (USAGE) printf("rv_ax = %p, rv_dx = %p\n",rv_ax,rv_dx);
     
     injector_payload_t[2] rvroots;
     rvroots[0] = _gc.primaryFL.regionOf(rv_ax);
@@ -190,7 +190,7 @@ extern (C) void inject_restore(void** target, void* rv_ax, void* rv_dx) {
         
         if (rvroots[0] !is null) new_payloads[injector_head.npayloads] = rvroots[0];
         if (rvroots[1] !is null) new_payloads[injector_head.npayloads +
-                                    (rvroots[0] !is null : 1 : 0)] = rvroots[1];
+                                    (rvroots[0] !is null ? 1 : 0)] = rvroots[1];
         
         inject_outer_2(new_payloads, injector_head.npayloads +
             (rvroots[0] !is null ? 1 : 0) +
@@ -212,7 +212,7 @@ extern (C) void inject_restore(void** target, void* rv_ax, void* rv_dx) {
     if (potential_globs !is null) free(potential_globs);
     
     //graph_disown(*target);
-    version (TRACK_DEAD_FN) {
+    version (GRAPH_FULL) {
         if (injector_head_dead is null) {
             injector_head_dead = injector_head;
             InjectorData* prev = injector_head.prev;
@@ -268,7 +268,7 @@ size_t injector_scan_globals(injector_payload_t** dest, injector_payload_t* rvro
             rvroots[0] = _gc.primaryFL.regionOf(*cast(void**)rv_ax);
         }
         if (rv_dx >= pbot && rv_dx <= ptop) {
-            rvroots[1] = _gc.primaryFL.regionOf(*cast(void**)rv_ax);
+            rvroots[1] = _gc.primaryFL.regionOf(*cast(void**)rv_dx);
         }
         for (void** ptr=cast(void**)pbot; ptr<=ptop; ++ptr) {
             if (potentialPointer(*ptr)) {

@@ -159,7 +159,7 @@ void marker_fn(GCT myThread) {
         
         //and now flip
         _gc.rootSetA = _gc.rootSetB;
-        _gc.rootSetB.clear();
+        //_gc.rootSetB.clear();
         
         /*
          *  Sync

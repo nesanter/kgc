@@ -53,6 +53,22 @@ DFLAGS=$(MODEL_FLAG) -O -release -inline -w -Isrc -Iimport $(PIC)
 UDFLAGS=$(MODEL_FLAG) -O -release -w -Isrc -Iimport $(PIC)
 DDOCFLAGS=-c -w -o- -Isrc -Iimport -version=CoreDdoc
 
+DEBUG:=
+DEBUGFLAGS=$(MODEL_FLAG) -g -gc -w -Isrc -Iimport $(PIC)
+
+ifeq ($(DEBUG),ON)
+	DFLAGS=$(DEBUGFLAGS)
+endif
+
+GRAPHVERSIONS:=-version=GCOUT -version=GRAPH_FULL
+GRAPHER:=
+
+ifeq ($(GRAPHER),ON)
+	DFLAGS+=$(GRAPHVERSIONS)
+	UDFLAGS+=$(GRAPHVERSIONS)
+	DDOCFLAGS+=$(GRAPHVERSIONS)
+endif
+
 CFLAGS=$(MODEL_FLAG) -O $(PIC)
 
 ifeq (osx,$(OS))

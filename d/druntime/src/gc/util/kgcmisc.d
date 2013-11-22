@@ -9,8 +9,7 @@ import gc.proxy;
 import gc.util.t_main;
 import core.sys.posix.signal;
 import core.atomic;
-version (unittest) import core.stdc.stdio : printf;
-else debug (USAGE) import core.stdc.stdio : printf;
+import core.stdc.stdio : printf;
 
 struct BlkInfo
 {

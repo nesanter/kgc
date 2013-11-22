@@ -1,1 +1,1 @@
-dmd -Id/druntime/import -Id/phobos -debuglib=libphobos2-kgc.so %1
+dmd -Id/druntime/import -Id/phobos -defaultlib=libphobos2-kgc.so -version=GCOUT gctester.d

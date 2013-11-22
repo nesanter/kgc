@@ -5,8 +5,8 @@ module gc.util.grapher;
  * 
  */
  
-version = GCOUT; 
-version = TRACK_FN_CONS;
+//version = GCOUT; 
+//version = TRACK_FN_CONS;
 
 import clib = core.stdc.stdlib;
 import core.stdc.stdio;
@@ -31,12 +31,14 @@ struct Node {
 }
 +/
 
-struct FnMap {
-    void* fn;
-    char* name;
+version (GRAPH_FULL) {
+    struct FnMap {
+        void* fn;
+        char* name;
+    }
+    __gshared FnMap* fnmap;
+    __gshared size_t fnmapsz;
 }
-__gshared FnMap* fnmap;
-__gshared size_t fnmapsz;
 
 /+
 //__gshared Node* nodes = null;
@@ -137,38 +139,39 @@ void graph_disown(void* ptr) {
 }
 +/
 
-void graph_add_fname(string name = __FUNCTION__) {
-    char* nameptr = cast(char*)name;
-    if (fnmap is null)
-        fnmap = cast(FnMap*)clib.malloc(FnMap.sizeof);
-    else
-        fnmap = cast(FnMap*)clib.realloc(fnmap, (fnmapsz+1) * FnMap.sizeof);
-    fnmap[fnmapsz] = FnMap(graph_get_fptr_up(), nameptr);
-    fnmapsz++;
-}
+version (GRAPH_FULL) {
+    void graph_add_fname(string name = __FUNCTION__) {
+        char* nameptr = cast(char*)name;
+        if (fnmap is null)
+            fnmap = cast(FnMap*)clib.malloc(FnMap.sizeof);
+        else
+            fnmap = cast(FnMap*)clib.realloc(fnmap, (fnmapsz+1) * FnMap.sizeof);
+        fnmap[fnmapsz] = FnMap(graph_get_fptr_up(), nameptr);
+        fnmapsz++;
+    }
 
-char* graph_get_fname(void* fptr) {
-    //printf("fptr = %p\n",fptr);
-    for (int i=0; i<fnmapsz; ++i) {
-        //printf("%p\n",fnmap[i].fn);
-        if (fnmap[i].fn == fptr) {
-            //printf("match found\n");
-            return fnmap[i].name;
+    char* graph_get_fname(void* fptr) {
+        //printf("fptr = %p\n",fptr);
+        for (int i=0; i<fnmapsz; ++i) {
+            //printf("%p\n",fnmap[i].fn);
+            if (fnmap[i].fn == fptr) {
+                //printf("match found\n");
+                return fnmap[i].name;
+            }
+        }
+        return null;
+    }
+
+
+    private void* graph_get_fptr_up() {
+        asm {
+            naked;
+            mov RAX, [RBP];
+            mov RAX, [RAX+8];
+            ret;
         }
     }
-    return null;
 }
-
-
-private void* graph_get_fptr_up() {
-    asm {
-        naked;
-        mov RAX, [RBP];
-        mov RAX, [RAX+8];
-        ret;
-    }
-}
-
 
 /+
 /*
@@ -354,7 +357,7 @@ private void graph_set_alive(Node* node, bool verify) {
 +/
 
 version (GCOUT) {
-    void graph_output_dot(InjectorData* fnhead, Freelist* fl, InjectorData* deadhead = null) {
+    void graph_output_dot(InjectorData* fnhead, Freelist* fl, InjectorData* deadhead = null, bool nointerconnect = false) {
         //printf("begin\n");
         fprintf(grapher_out, "subgraph cluster_G%lu {\n",grapher_out_count++);
         Freelist.Region** visited;
@@ -372,9 +375,9 @@ version (GCOUT) {
                 fprintf(grapher_out,"%lu ",nodeid+fl.regionID(idata.payload[i]));
             }
             fprintf(grapher_out,"}\n");
-            version (TRACK_FN_CONS) if (idata.caller !is null) fprintf(grapher_out,"%lu -> %lu\n",idata.caller.id+fnidbase,idata.id+fnidbase);
+            version (GRAPH_FULL) if (idata.caller !is null) fprintf(grapher_out,"%lu -> %lu\n",idata.caller.id+fnidbase,idata.id+fnidbase);
             for (int i=0; i<idata.npayloads; ++i) {
-                graph_output_node(idata.payload[i], fl, &visited, &nvisited);
+                graph_output_node(idata.payload[i], fl, &visited, &nvisited, nointerconnect);
             }
             idata = idata.prev;
         }
@@ -390,9 +393,9 @@ version (GCOUT) {
                 fprintf(grapher_out,"%lu ",nodeid+fl.regionID(idata.payload[i]));
             }
             fprintf(grapher_out,"}\n");
-            version (TRACK_FN_CONS) if (idata.caller !is null) fprintf(grapher_out,"%lu -> %lu\n",idata.caller.id+fnidbase,idata.id+fnidbase);
+            version (GRAPH_FULL) if (idata.caller !is null) fprintf(grapher_out,"%lu -> %lu\n",idata.caller.id+fnidbase,idata.id+fnidbase);
             for (int i=0; i<idata.npayloads; ++i) {
-                graph_output_node(idata.payload[i], fl, &visited, &nvisited);
+                graph_output_node(idata.payload[i], fl, &visited, &nvisited, nointerconnect);
             }
             idata = idata.prev;
         }
@@ -401,7 +404,7 @@ version (GCOUT) {
         for (int i=0; i<nglobs; ++i) {
             fprintf(grapher_out,"%lu[label=\"G\",shape=diamond]\n",++glbid);
             fprintf(grapher_out,"%lu -> { %lu }\n",glbid,nodeid+fl.regionID(globs[i]));
-            graph_output_node(globs[i], fl, &visited, &nvisited);
+            graph_output_node(globs[i], fl, &visited, &nvisited, nointerconnect);
         }
         fprintf(grapher_out, "}\n");
         nodeid += fl.numRegions;
@@ -409,7 +412,7 @@ version (GCOUT) {
         //printf("done\n");
     }
 
-    private void graph_output_node(Freelist.Region* r, Freelist* fl, Freelist.Region*** visited, size_t* nvisited) {
+    private void graph_output_node(Freelist.Region* r, Freelist* fl, Freelist.Region*** visited, size_t* nvisited, bool nointerconnect) {
         for (int i=0; i<*nvisited; ++i) {
             if ((*visited)[i] == r) return;
         }
@@ -427,13 +430,15 @@ version (GCOUT) {
         } else {
             fprintf(grapher_out,"%lu[label=\"%p\",style=dotted]\n",nodeid+fl.regionID(r),r.ptr);
         }
-        fprintf(grapher_out, "%lu -> { ",nodeid+fl.regionID(r));
-        for (int i=0; i<r.nconnections; ++i) {
-            fprintf(grapher_out, "%lu ", nodeid+fl.regionID(r.connections[i]));
-        }
-        fprintf(grapher_out, "}\n");
-        for (int i=0; i<r.nconnections; ++i) {
-            graph_output_node(r.connections[i], fl, visited, nvisited);
+        if (!nointerconnect) {
+            fprintf(grapher_out, "%lu -> { ",nodeid+fl.regionID(r));
+            for (int i=0; i<r.nconnections; ++i) {
+                fprintf(grapher_out, "%lu ", nodeid+fl.regionID(r.connections[i]));
+            }
+            fprintf(grapher_out, "}\n");
+            for (int i=0; i<r.nconnections; ++i) {
+                graph_output_node(r.connections[i], fl, visited, nvisited, nointerconnect);
+            }
         }
     }
 }

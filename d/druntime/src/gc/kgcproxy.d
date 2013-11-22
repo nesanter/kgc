@@ -16,7 +16,8 @@ module gc.proxy;
 //debug = USAGE;
 
 import gc.gc;
-import gc.misc : BlkInfo;
+import gc.util.misc : BlkInfo;
+static import gc.util.grapher;
 //import gc.stats;
 
 import core.stdc.stdlib;
@@ -63,10 +64,12 @@ package
             void function(void*) gc_removeRange;
             
             size_t function() gc_getBytesAllocated;
+            size_t function() gc_getBytesReleased;
             bool function(bool) gc_wait;
             
             void function() gc_dump;
-            void function() gc_register_fn;
+            void function() gc_registerFunction;
+            void function(bool,bool) gc_graph_output_dot;
         }
     }
 
@@ -104,10 +107,13 @@ package
         pthis.gc_removeRange = &gc_removeRange;
         
         pthis.gc_getBytesAllocated = &gc_getBytesAllocated;
+        pthis.gc_getBytesReleased = &gc_getBytesReleased;
+        
         pthis.gc_wait = &gc_wait;
         
         pthis.gc_dump = &gc_dump;
-        pthis.gc_register_fn = &gc_register_fn;
+        pthis.gc_registerFunction = &gc_registerFunction;
+        pthis.gc_graph_output_dot = &gc_graph_output_dot;
     }
 }
 
@@ -205,7 +211,6 @@ extern (C)
     }
 
     void* gc_malloc( size_t sz, uint ba = 0) {
-        graph_add_fname();
         if( proxy is null )
             return _gc.malloc( sz, ba, null );
         return proxy.gc_malloc( sz, ba);
@@ -363,6 +368,14 @@ extern (C)
         }
     }
     
+    size_t gc_getBytesReleased() {
+        if (proxy is null) {
+            return _gc.getBytesReleased();
+        } else {
+            return proxy.gc_getBytesReleased();
+        }
+    }
+    
     bool gc_wait(bool full) {
         if (proxy is null) {
             return _gc.wait(full);
@@ -379,11 +392,21 @@ extern (C)
         }
     }
     
-    void gc_register_fn() {
+    void gc_registerFunction() {
         if (proxy is null) {
-            _gc.register_fn();
+            _gc.registerFunction();
         } else {
-            proxy.register_fn();
+            proxy.gc_registerFunction();
+        }
+    }
+    
+    version (GCOUT) {
+        void gc_graph_output_dot(bool full, bool nointerconnect) {
+            if (proxy is null) {
+                _gc.graph_output_dot(full,nointerconnect);
+            } else {
+                proxy.gc_graph_output_dot(full,nointerconnect);
+            }
         }
     }
 

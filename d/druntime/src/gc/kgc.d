@@ -5,8 +5,8 @@ version = SINGLE_COLLECT;
 //version = NOGC;
 
 enum GCType { NONE, NEW }
-version (NOGC) immutable GCType _gctype = GCType.NONE;
-else immutable GCType _gctype = GCType.NEW;
+version (NOGC) enum GCType _gctype = GCType.NONE;
+else enum GCType _gctype = GCType.NEW;
 
 static if (_gctype == GCType.NEW) {
     import gc.util.misc;
@@ -14,6 +14,8 @@ static if (_gctype == GCType.NEW) {
     import gc.util.t_main : yield;
     import gc.util.t_marker;
     import gc.util.injector;
+    static import gc.util.marking;
+    static import gc.util.grapher;
     static import core.memory;
     private alias BlkAttr = core.memory.GC.BlkAttr;
     import core.stdc.stdio;
@@ -704,10 +706,10 @@ class KGC
         }
     }
     
-    size_t getBytesAllocated() {
+    size_t getBytesAllocated() nothrow {
         return bytesAllocated;
     }
-    size_t getBytesReleased() {
+    size_t getBytesReleased() nothrow {
         return bytesReleased;
     }
     
@@ -725,6 +727,24 @@ class KGC
     private uint andBits(void* p, size_t sz, uint bits) {
         *cast(uint*)(p+sz) &= bits;
         return *cast(uint*)(p+sz);
+    }
+    
+    void registerFunction(string name = __FUNCTION__) {
+        gc.util.grapher.graph_add_fname(name);
+    }
+    
+    version (GCOUT) {
+        void graph_output_dot(bool full, bool nointerconnect = false) {
+            gc.util.marking.verifyRecursive(injector_head, &primaryFL);
+            version (GRAPH_FULL) {
+                if (full)
+                    gc.util.grapher.graph_output_dot(injector_head, &primaryFL, injector_head_dead, nointerconnect);
+                else
+                    gc.util.grapher.graph_output_dot(injector_head, &primaryFL, null, nointerconnect);
+            } else {
+                gc.util.grapher.graph_output_dot(injector_head, &primaryFL);
+            }
+        }
     }
     
     //debug

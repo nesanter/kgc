@@ -155,6 +155,7 @@ MANIFEST=\
 	src\gc\util\kgcworker.d \
 	src\gc\util\freelists.d \
 	src\gc\util\grapher.d \
+    src\gc\util\injector.d \
 	\
 	src\gcstub\gc.d \
 	\
