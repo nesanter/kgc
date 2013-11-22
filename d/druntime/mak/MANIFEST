@@ -148,13 +148,13 @@ MANIFEST=\
 	src\core\sys\windows\windows.d \
 	\
 	src\gc\kgc.d \
-	src\gc\kgcmarking.d \
-	src\gc\kgcmisc.d \
+	src\gc\util\kgcmarking.d \
+	src\gc\util\kgcmisc.d \
 	src\gc\kgcproxy.d \
-	src\gc\kgcthreading.d \
-	src\gc\kgcworker.d \
-	src\gc\freelists.d \
-	src\gc\grapher.d \
+	src\gc\util\kgcthreading.d \
+	src\gc\util\kgcworker.d \
+	src\gc\util\freelists.d \
+	src\gc\util\grapher.d \
 	\
 	src\gcstub\gc.d \
 	\
