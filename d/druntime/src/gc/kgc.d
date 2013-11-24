@@ -3,6 +3,7 @@ module gc.gc;
 //debug = USAGE;
 version = SINGLE_COLLECT;
 //version = NOGC;
+//debug = GC_PROFILE;
 
 enum GCType { NONE, NEW }
 version (NOGC) enum GCType _gctype = GCType.NONE;
@@ -22,9 +23,11 @@ static if (_gctype == GCType.NEW) {
     import core.sync.mutex;
     import core.sync.semaphore;
     import slib = core.stdc.string;
+} else {
+    debug (USAGE) import core.stdc.stdio;
 }
 
-debug (USAGE) import core.stdc.stdio;
+debug (GC_PROFILE) import core.stdc.time;
 
 package {
     extern (C) void onOutOfMemoryError();
@@ -131,8 +134,9 @@ class KGC
             //these control the threshold
             __gshared size_t bytesAllocated; //this must only increase
             __gshared size_t bytesReleased; //ditto
-            enum size_t collectStart = 4000;
+            enum size_t collectStart = 5000;
             enum size_t collectStop = 3500;
+            enum size_t verifyThreshold = 50; //number of allocs before verify is run
             
         }
     }
@@ -169,6 +173,7 @@ class KGC
             miscRootQueue.initialize();
             rootSetA.initialize();
             rootSetB.initialize();
+            flCache.init();
             
             init_workers();
         }
@@ -223,6 +228,20 @@ class KGC
                 clib.free(ranges);
             if (rangesCopy !is null)
                 clib.free(rangesCopy);
+                
+            debug (GC_PROFILE) {
+                printf("+--PROFILE---\n");
+                printf("| inject time:      %lu\n",injectTime * 1000 / CLOCKS_PER_SEC);
+                printf("| restore time (a): %lu\n",restoreTimeA * 1000 / CLOCKS_PER_SEC);
+                printf("| restore time (b): %lu\n",restoreTimeB * 1000 / CLOCKS_PER_SEC);
+                printf("| restore time (c): %lu\n",restoreTimeC * 1000 / CLOCKS_PER_SEC);
+                printf("| collect time:     %lu\n",collectTime * 1000 / CLOCKS_PER_SEC);
+                printf("|   verify time:    %lu\n",verifyTime * 1000 / CLOCKS_PER_SEC);
+                printf("|     scang time:   %lu\n",scangTime * 1000 / CLOCKS_PER_SEC);
+                printf("|   update time:    %lu\n",updateTime * 1000 / CLOCKS_PER_SEC);
+                printf("|   sweep time:     %lu\n",sweepTime * 1000 / CLOCKS_PER_SEC);
+                printf("+------------\n");
+            }
         }
     }
     
@@ -254,18 +273,23 @@ class KGC
             return 0;
         } else static if (_gctype == GCType.NEW) {
             
-            size_t asz;
+            //size_t asz;
+            uint attr;
             
             {
                 mutatorLock.lock();
                 scope (exit) mutatorLock.unlock();
                 
-                asz = primaryFL.capacity(p);
+                //asz = primaryFL.capacity(p);
                 //if (asz == 0) asz = secondaryFL.capacity(p);
-                if (asz == 0) return 0;
+                //if (asz == 0) return 0;
+                auto rp = primaryFL.regionOf(p);
+                if (rp is null) return 0;
+                attr = rp.attr;
             }
             
-            return getBits(p, asz-GC_EXTRA_SIZE);
+            //return getBits(p, asz-GC_EXTRA_SIZE);
+            return attr;
         } else
             return 0;
     }
@@ -277,18 +301,24 @@ class KGC
             return 0;
         } else static if (_gctype == GCType.NEW) {
             
-            size_t asz;
+            uint attr;
             
             {
                 mutatorLock.lock();
                 scope (exit) mutatorLock.unlock();
                 
-                asz = primaryFL.capacity(p);
+                //asz = primaryFL.capacity(p);
                 //if (asz == 0) asz = secondaryFL.capacity(p);
-                if (asz == 0) return 0;
+                //if (asz == 0) return 0;
+                
+                auto rp = primaryFL.regionOf(p);
+                if (rp is null) return 0;
+                rp.attr |= mask;
+                attr = rp.attr;
             }
             
-            return orBits(p, asz-GC_EXTRA_SIZE, mask);
+            //return orBits(p, asz-GC_EXTRA_SIZE, mask);
+            return attr;
         } else
             return 0;
     }
@@ -300,18 +330,24 @@ class KGC
             return 0;
         } else static if (_gctype == GCType.NEW) {
 
-            size_t asz;
+            //size_t asz;
+            uint attr;
 
             {
                 mutatorLock.lock();
                 scope (exit) mutatorLock.unlock();
                 
-                asz = primaryFL.capacity(p);
+                //asz = primaryFL.capacity(p);
                 //if (asz == 0) asz = secondaryFL.capacity(p);
-                if (asz == 0) return 0;
+                //if (asz == 0) return 0;
+                auto rp = primaryFL.regionOf(p);
+                if (rp is null) return 0;
+                rp.attr &= mask;
+                attr = rp.attr;
             }
             
-            return andBits(p, asz-GC_EXTRA_SIZE, ~mask);
+            //return andBits(p, asz-GC_EXTRA_SIZE, ~mask);
+            return attr;
         } else
             return 0;
     }
@@ -323,7 +359,8 @@ class KGC
             alloc_size = &localAllocSize;
         static if (_gctype == GCType.NONE) {
             void* p = clib.malloc(size+GC_EXTRA_SIZE);
-            *alloc_size = size+GC_EXTRA_SIZE;                
+            *alloc_size = size+GC_EXTRA_SIZE;   
+            setBits(p, *alloc_size-GC_EXTRA_SIZE, bits); //put at end of true block             
         } else static if (_gctype == GCType.NEW) {
             mutatorLock.lock();
             scope (exit) mutatorLock.unlock();
@@ -336,12 +373,16 @@ class KGC
             if (p !is null && (p+*alloc_size) > maxPtr)
                 maxPtr = p+*alloc_size;
             
+            rp.attr = bits;
+            
             if (disabled == 0)
                 inject_outer(rp);
+            
+            gc.util.marking.verifyFunctions(injector_head, &primaryFL);
         } else
             void* p = null;
         //set bits
-        setBits(p, *alloc_size-GC_EXTRA_SIZE, bits); //put at end of true block
+        
         
         bytesAllocated += *alloc_size;
         
@@ -381,11 +422,16 @@ class KGC
                 mutatorLock.lock();
                 scope (exit) mutatorLock.unlock();
                 
-                newp = primaryFL.regrab(p, size, alloc_size, &new_alloc_size);
+                Freelist.Region* rp;
+                
+                newp = primaryFL.regrab(p, size, alloc_size, &new_alloc_size, &rp);
+                
+                rp.attr = bits;
                 //if (newp is null) newp = secondaryFL.regrab(p, size, alloc_size);
             }
             
-            setBits(newp, *alloc_size-GC_EXTRA_SIZE, bits);
+            //setBits(newp, *alloc_size-GC_EXTRA_SIZE, bits);
+            
             
             bytesAllocated += new_alloc_size;
             
@@ -418,8 +464,8 @@ class KGC
                 //if (ext == 0 && !fail) ext = secondaryFL.extend(p, minsize, maxsize, &fail);
             }
             
-            if (fail) printf("EXTEND FAILED\n");
-            else printf("EXTEND SUCEEDED\n");
+            //if (fail) printf("EXTEND FAILED\n");
+            //else printf("EXTEND SUCEEDED\n");
             return ext;
         } else
             return 0;
@@ -513,7 +559,7 @@ class KGC
         debug (USAGE) printf("<GC> query (%p)\n",p);
         auto rp = primaryFL.regionOf(p);
         if (rp is null) return BlkInfo.init;
-        return BlkInfo(rp.ptr, rp.capacity, getBits(rp.ptr, rp.capacity));
+        return BlkInfo(rp.ptr, rp.capacity, rp.attr);
     }
     
     void check(void* p) {
@@ -593,9 +639,9 @@ class KGC
                 
                 rangesDirty = true;
                 
-                foreach (size_t i; 0 .. nranges) {
-                    printf("%lu (%p to %p)\n",i,ranges[i].pbot,ranges[i].ptop);
-                }
+                //foreach (size_t i; 0 .. nranges) {
+                //    printf("%lu (%p to %p)\n",i,ranges[i].pbot,ranges[i].ptop);
+                //}
             }
             
         }
@@ -646,6 +692,12 @@ class KGC
         debug (USAGE) printf("<GC> fullCollect ()\n");
         
         static if (_gctype == GCType.NEW) {
+            
+            debug (GC_PROFILE) {
+                clock_t start, stop;
+                start = clock();
+            }
+            /*
             if (progressLock.inactive) {
                 if (collectInProgress == CollectMode.OFF) {
                     collectInProgress = CollectMode.ON;
@@ -655,16 +707,27 @@ class KGC
                 }
             }
             return false;
+            */
+            gc.util.marking.incrementEpoch();
+            gc.util.marking.verifyRecursive(injector_head, &primaryFL);
+            size_t sz;
+            primaryFL.freeSweep(&sz);
+            bytesReleased += sz;
+            
+            debug (GC_PROFILE) {
+                stop = clock();
+                collectTime += (stop-start);
+            }
+                
+            return true;
         } else
             assert(0);
     }
     
     static if (_gctype == GCType.NEW) {
-        package void finalize(void* p, size_t sz) {
-            debug (USAGE) printf("<GC> finalize (%p,%lu)\n",p);
-            if (getBits(p, sz) && BlkAttr.FINALIZE) {
-                rt_finalize2(p, false, false);
-            }
+        package void finalize(void* p) {
+            debug (USAGE) printf("<GC> finalize (%p)\n",p);
+            rt_finalize2(p, false, false);
         }
     }
     
@@ -682,14 +745,14 @@ class KGC
     }
     
     package bool collectStartThreshold() {
-        return (bytesAllocated-bytesReleased) > collectStartThreshold;
+        return (bytesAllocated-bytesReleased) > collectStart;
     }
     
     package bool collectStopThreshold() {
         version (SINGLE_COLLECT) {
             return false;
         } else {
-            return (bytesAllocated-bytesReleased) > collectStopThreshold;
+            return (bytesAllocated-bytesReleased) > collectStop;
         }
     }
     
@@ -729,22 +792,52 @@ class KGC
         return *cast(uint*)(p+sz);
     }
     
-    void registerFunction(string name = __FUNCTION__) {
-        gc.util.grapher.graph_add_fname(name);
+    version (GCOUT) {
+        void registerFunction(string name = __FUNCTION__) {
+            gc.util.grapher.graph_add_fname(name);
+        }
     }
     
     version (GCOUT) {
-        void graph_output_dot(bool full, bool nointerconnect = false) {
-            gc.util.marking.verifyRecursive(injector_head, &primaryFL);
+        void graph_output_dot(bool full, bool nointerconnect = false, bool floaters = true) {
+            //gc.util.marking.incrementEpoch();
+            //gc.util.marking.verifyRecursive(injector_head, &primaryFL);
             version (GRAPH_FULL) {
                 if (full)
-                    gc.util.grapher.graph_output_dot(injector_head, &primaryFL, injector_head_dead, nointerconnect);
+                    gc.util.grapher.graph_output_dot(injector_head, &primaryFL, injector_head_dead, nointerconnect, floaters);
                 else
-                    gc.util.grapher.graph_output_dot(injector_head, &primaryFL, null, nointerconnect);
+                    gc.util.grapher.graph_output_dot(injector_head, &primaryFL, null, nointerconnect, floaters);
             } else {
-                gc.util.grapher.graph_output_dot(injector_head, &primaryFL);
+                gc.util.grapher.graph_output_dot(injector_head, &primaryFL, null, nointerconnect, floaters);
             }
         }
+    }
+    
+    void dumpPointer(void* p) {
+        printf("+--INFO---\n");
+        printf("| Pointer: %p\n",p);
+        auto rp = primaryFL.regionOf(p);
+        printf("| Region: %p\n",rp);
+        if (rp is null) {
+            printf("+---------\n");
+            return;
+        }
+        printf("| Size: %lu/%lu\n",rp.size,rp.capacity);
+        printf("| Color: %hhu\n",rp.color);
+        printf("| Connections (out): %lu\n",rp.nconnections);
+        
+        auto rp2 = primaryFL.tail;
+        size_t cheap;
+        while (rp2 !is null) {
+            for (int i=0; i<rp2.nconnections; ++i) {
+                if (rp == rp2.connections[i])
+                    ++cheap;
+            }
+            rp2 = rp2.prev;
+        }
+        
+        printf("| Connections (in): %lu\n",cheap);
+        printf("+---------\n");
     }
     
     //debug

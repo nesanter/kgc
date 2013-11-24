@@ -20,7 +20,7 @@ import gc.util.misc : BlkInfo;
 static import gc.util.grapher;
 //import gc.stats;
 
-import core.stdc.stdlib;
+import clib = core.stdc.stdlib;
 debug (USAGE) import core.stdc.stdio;
 
 package
@@ -68,8 +68,12 @@ package
             bool function(bool) gc_wait;
             
             void function() gc_dump;
-            void function() gc_registerFunction;
-            void function(bool,bool) gc_graph_output_dot;
+            version (GCOUT) {
+                void function() gc_registerFunction;
+                void function(bool,bool,bool) gc_graph_output_dot;
+            }
+            
+            void function(void*) gc_dumpPointer;
         }
     }
 
@@ -112,8 +116,12 @@ package
         pthis.gc_wait = &gc_wait;
         
         pthis.gc_dump = &gc_dump;
-        pthis.gc_registerFunction = &gc_registerFunction;
-        pthis.gc_graph_output_dot = &gc_graph_output_dot;
+        version (GCOUT) {
+            pthis.gc_registerFunction = &gc_registerFunction;
+            pthis.gc_graph_output_dot = &gc_graph_output_dot;
+        }
+        
+        pthis.gc_dumpPointer = &gc_dumpPointer;
     }
 }
 
@@ -126,7 +134,7 @@ extern (C)
         void* p;
         ClassInfo ci = gc_t.classinfo;
 
-        p = malloc(ci.init.length);
+        p = clib.malloc(ci.init.length);
         (cast(byte*)p)[0 .. ci.init.length] = ci.init[];
         _gc = cast(gc_t)p;
 
@@ -154,7 +162,7 @@ extern (C)
         thread_term();
 
         _gc.Dtor();
-        free(cast(void*)_gc);
+        clib.free(cast(void*)_gc);
         _gc = null;
     }
 
@@ -392,21 +400,31 @@ extern (C)
         }
     }
     
-    void gc_registerFunction() {
-        if (proxy is null) {
-            _gc.registerFunction();
-        } else {
-            proxy.gc_registerFunction();
+    version (GCOUT) {
+        void gc_registerFunction() {
+            if (proxy is null) {
+                _gc.registerFunction();
+            } else {
+                proxy.gc_registerFunction();
+            }
         }
     }
     
     version (GCOUT) {
-        void gc_graph_output_dot(bool full, bool nointerconnect) {
+        void gc_graph_output_dot(bool full, bool nointerconnect, bool floaters) {
             if (proxy is null) {
-                _gc.graph_output_dot(full,nointerconnect);
+                _gc.graph_output_dot(full,nointerconnect,floaters);
             } else {
-                proxy.gc_graph_output_dot(full,nointerconnect);
+                proxy.gc_graph_output_dot(full,nointerconnect,floaters);
             }
+        }
+    }
+    
+    void gc_dumpPointer(void* p) {
+        if (proxy is null) {
+            _gc.dumpPointer(p);
+        } else {
+            proxy.gc_dumpPointer(p);
         }
     }
 

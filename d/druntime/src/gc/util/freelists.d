@@ -13,16 +13,24 @@ module gc.util.freelists;
 
 //debug = USAGE;
 version = PTRMAP;
+//debug = GC_PROFILE;
 
 import gc.proxy;
 import gc.util.misc : gcAssert, onGCFatalError;
 import gc.gc : onOutOfMemoryError, onInvalidMemoryOperationError, KGC, mem_free, mem_alloc;
 import gc.util.marking : potentialPointer;
+static import core.memory;
+private alias BlkAttr = core.memory.GC.BlkAttr;
 //import clib = core.stdc.stdlib;
 import slib = core.stdc.string;
 import clib = core.stdc.stdlib;
 
 import core.stdc.stdio : printf;
+
+debug (GC_PROFILE) {
+    import core.stdc.time;
+    import gc.util.injector : updateTime, sweepTime;
+}
 
 //this currently uses a very simple method
 //and is not thread-safe
@@ -33,6 +41,7 @@ struct Freelist {
         void* ptr;
         ubyte color;
         size_t size, capacity;
+        uint attr;
         Region* prev, prev2;
         
         Region** connections;
@@ -45,6 +54,7 @@ struct Freelist {
             this.color = _gc.epoch % 3;
             this.size = size;
             this.capacity = capacity;
+            this.attr = 0;
             this.prev = prev;
             this.prev2 = null;
             this.connections = null;
@@ -66,12 +76,19 @@ struct Freelist {
         void updateConnections(Freelist* f) {
             //printf("here (%p)\n",this);
             if (color == _gc.epoch % 3) return;
+            
+            debug (GC_PROFILE) {
+                clock_t start, stop;
+                start = clock();
+            }
+            
             color = _gc.epoch % 3;
             size_t found;
             for (void** p=cast(void**)ptr; p<=ptr+size; ++p) {
                 if (potentialPointer(*p)) {
                     Region* rp = f.regionOf(*p);
                     if (rp !is null) {
+                        //printf("found connection!\n");
                         if (found >= nconnections)
                             connections = cast(Region**)clib.realloc(connections, (found+1)*(Region*).sizeof);
                         connections[found++] = rp;
@@ -79,6 +96,12 @@ struct Freelist {
                 }
             }
             nconnections = found;
+            
+            debug (GC_PROFILE) {
+                stop = clock();
+                updateTime += (stop-start);
+            }
+            
             for (int i=0; i<nconnections; ++i)
                 connections[i].updateConnections(f);
         }
@@ -105,7 +128,7 @@ struct Freelist {
     //always uses primary
     void* grab(size_t sz, size_t* alloc_size = null, Region** rp=null) {
         debug (USAGE) printf("<GC> Freelist.grab (%lu,%p)\n",sz,alloc_size);
-        size_t bytes = cast(size_t)(sz * buffer)+KGC.GC_EXTRA_SIZE;
+        size_t bytes = cast(size_t)(sz * buffer)/*+KGC.GC_EXTRA_SIZE*/;
         
         if (sz == 0) return null;
 
@@ -226,7 +249,8 @@ struct Freelist {
         //printf("releasing region %p\n",r.ptr);
         if (free_size !is null)
             *free_size += r.capacity;
-        _gc.finalize(r.ptr, r.capacity);
+        if (r.attr & BlkAttr.FINALIZE)
+            _gc.finalize(r.ptr);
         r.size = 0;
         
     }
@@ -272,8 +296,38 @@ struct Freelist {
         return false;
     }
     
-    //uses secondary
     void freeSweep(size_t* free_size) {
+        debug (USAGE) printf("<GC> Freelist.freeSweep (%p)\n",free_size);
+        
+        debug (GC_PROFILE) {
+            clock_t start, stop;
+            start = clock();
+        }
+        
+        Region* r = tail;
+        size_t freed;
+        ubyte free_color = (_gc.epoch-2)%3;
+        while (r !is null) {
+            if (r.color == free_color && r.size > 0) {
+                freed += r.capacity;
+                if (r.attr & BlkAttr.FINALIZE)
+                    _gc.finalize(r.ptr);
+                r.size = 0;
+            }
+            r = r.prev;
+        }
+        if (free_size !is null)
+            *free_size += freed;
+        //tail = null;
+        
+        debug (GC_PROFILE) {
+            stop = clock();
+            sweepTime += (stop-start);
+        }
+    }
+    
+    //uses secondary
+    void freeSweepSecondary(size_t* free_size) {
         debug (USAGE) printf("<GC> Freelist.freeSweep (%p)\n",free_size);
         Region* r = tail;
         size_t freed;
@@ -281,7 +335,8 @@ struct Freelist {
         while (r !is null) {
             if (r.color == free_color && r.size > 0) {
                 freed += r.capacity;
-                _gc.finalize(r.ptr, r.capacity);
+                if (r.attr & BlkAttr.FINALIZE)
+                    _gc.finalize(r.ptr);
                 r.size = 0;
             }
             r = r.prev2;
@@ -412,7 +467,7 @@ struct Freelist {
         while (r !is null) {
             if (r.ptr == p) {
                 size_t cap = r.capacity - r.size;
-                if (cap - KGC.GC_EXTRA_SIZE > minamt) {
+                if (cap/* - KGC.GC_EXTRA_SIZE*/ > minamt) {
                     size_t extamt = cap > maxamt ? maxamt : cap;
                     r.size += extamt;
                     return extamt;
@@ -427,7 +482,7 @@ struct Freelist {
     }
     
     //uses primary
-    void* regrab(void* p, size_t newsz, size_t* alloc_size = null, size_t* new_alloc_size = null) {
+    void* regrab(void* p, size_t newsz, size_t* alloc_size = null, size_t* new_alloc_size = null, Region** rp = null) {
         Region* r = tail;
         while (r !is null) {
             if (r.ptr == p) {
@@ -437,13 +492,16 @@ struct Freelist {
                     r.size = newsz;
                     if (alloc_size !is null)
                         *alloc_size += r.capacity;
+                    
+                    if (rp !is null)
+                        *rp = r;
+                        
                     return p;
                 } else {
-                    void* newp = grab(newsz, alloc_size);
+                    void* newp = grab(newsz, alloc_size, rp);
                     if (new_alloc_size !is null)
                         *new_alloc_size = *alloc_size - r.capacity;
                     slib.memcpy(newp, p, r.size);
-                    if (new_alloc_size !is null)
                     r.size = 0; //release r
                     
                     return newp;
@@ -463,13 +521,13 @@ struct Freelist {
         while (r !is null) {
             if (pm.query(r.ptr) !is null)
                 printf("| %lu - %p - %lu bytes of %lu (%c) [M]\n",i,r,
-                        (r.size == 0) ? 0 : r.size+_gc.GC_EXTRA_SIZE, r.capacity,
+                        (r.size == 0) ? 0 : r.size/*+_gc.GC_EXTRA_SIZE*/, r.capacity,
                         (r.size == 0 || r.fake_free) ? (r.size == 0 ? '-' : '*') : ((r.color == white_color) ? 'W' :
                         ((r.color == grey_color) ? 'G' : 'B'))
                     );
             else
                 printf("| %lu - %p - %lu bytes of %lu (%c)\n",i,r,
-                        (r.size == 0) ? 0 : r.size+_gc.GC_EXTRA_SIZE, r.capacity,
+                        (r.size == 0) ? 0 : r.size/*+_gc.GC_EXTRA_SIZE*/, r.capacity,
                         (r.size == 0 || r.fake_free) ? (r.size == 0 ? '-' : '*') : ((r.color == white_color) ? 'W' :
                         ((r.color == grey_color) ? 'G' : 'B'))
                     );
@@ -492,7 +550,7 @@ unittest {
     gcAssert(fl.regionOf(p1).ptr == p1);
     gcAssert(fl.release(p1));
     gcAssert(fl.length == 2);
-    gcAssert(fl.minimize() == 10+KGC.GC_EXTRA_SIZE);
+    gcAssert(fl.minimize() == 10/*+KGC.GC_EXTRA_SIZE*/);
     gcAssert(fl.length == 1);
     fl.freeAll();
     gcAssert(fl.length == 0);
@@ -504,7 +562,11 @@ unittest {
 //if this fails, the region list is exhaustively scanned
 //this is only a cache
 struct PointerMap {
-    Freelist.Region*[256] map;
+    Freelist.Region** map;
+    
+    void init() {
+        map = cast(Freelist.Region**)mem_alloc((Freelist.Region*).sizeof * 256);
+    }
     
     struct RegionList {
         Freelist.Region* ptr;

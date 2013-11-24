@@ -266,7 +266,7 @@ void sweeper_fn(GCT myThread) {
         }
         
         //then go through secondaryFL and merge changes
-        _gc.secondaryFL.freeSweep(&release_size);
+        _gc.secondaryFL.freeSweepSecondary(&release_size);
         
         debug (VERBOSE) printf("<S> released %llu bytes\n",release_size);
         _gc.bytesReleased += release_size;

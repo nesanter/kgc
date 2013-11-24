@@ -357,7 +357,7 @@ private void graph_set_alive(Node* node, bool verify) {
 +/
 
 version (GCOUT) {
-    void graph_output_dot(InjectorData* fnhead, Freelist* fl, InjectorData* deadhead = null, bool nointerconnect = false) {
+    void graph_output_dot(InjectorData* fnhead, Freelist* fl, InjectorData* deadhead = null, bool nointerconnect = false, bool floaters = true) {
         //printf("begin\n");
         fprintf(grapher_out, "subgraph cluster_G%lu {\n",grapher_out_count++);
         Freelist.Region** visited;
@@ -406,6 +406,23 @@ version (GCOUT) {
             fprintf(grapher_out,"%lu -> { %lu }\n",glbid,nodeid+fl.regionID(globs[i]));
             graph_output_node(globs[i], fl, &visited, &nvisited, nointerconnect);
         }
+        if (floaters) {
+            auto r = fl.tail;
+            while (r !is null) {
+                if (r.size > 0 && !r.fake_free && r.color == _gc.epoch % 3) {
+                    bool v;
+                    for (int i=0; i<nvisited; ++i) {
+                        if (visited[i] == r) {
+                            v = true;
+                            break;
+                        }
+                    }
+                    if (!v)
+                        graph_output_node(r, fl, &visited, &nvisited, nointerconnect);
+                }
+                r = r.prev;
+            }
+        }
         fprintf(grapher_out, "}\n");
         nodeid += fl.numRegions;
         fnidbase += fnidnum;
@@ -422,15 +439,15 @@ version (GCOUT) {
         if (r.size == 0) {
             fprintf(grapher_out, "%lu[label=\"(nil)\",shape=none]\n",nodeid+fl.regionID(r));
         } else if (r.fake_free) {
-            fprintf(grapher_out, "%lu[label=\"%p\",style=filled]\n",nodeid+fl.regionID(r),r.ptr);
+            fprintf(grapher_out, "%lu[label=\"%p\",style=filled]\n",nodeid+fl.regionID(r),r);
         } else if (r.color == _gc.epoch % 3) {
-            fprintf(grapher_out,"%lu[label=\"%p\"]\n",nodeid+fl.regionID(r),r.ptr);
+            fprintf(grapher_out,"%lu[label=\"%p\"]\n",nodeid+fl.regionID(r),r);
         } else if (r.color == (_gc.epoch-1) % 3) {
-            fprintf(grapher_out,"%lu[label=\"%p\",style=dashed]\n",nodeid+fl.regionID(r),r.ptr);
+            fprintf(grapher_out,"%lu[label=\"%p\",style=dashed]\n",nodeid+fl.regionID(r),r);
         } else {
-            fprintf(grapher_out,"%lu[label=\"%p\",style=dotted]\n",nodeid+fl.regionID(r),r.ptr);
+            fprintf(grapher_out,"%lu[label=\"%p\",style=dotted]\n",nodeid+fl.regionID(r),r);
         }
-        if (!nointerconnect) {
+        if (r.size > 0 && !nointerconnect) {
             fprintf(grapher_out, "%lu -> { ",nodeid+fl.regionID(r));
             for (int i=0; i<r.nconnections; ++i) {
                 fprintf(grapher_out, "%lu ", nodeid+fl.regionID(r.connections[i]));

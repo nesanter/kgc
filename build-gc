@@ -1,5 +1,5 @@
 cd d/druntime
-make -f posix.mak DEBUG=ON GRAPHER=ON 
+make -j3 -f posix.mak
 cd ../phobos
-make -f posix.mak
+make -j3 -f posix.mak
 echo libphobos2-kgc is located in d/phobos/generated/linux/release/default

@@ -5,12 +5,16 @@
 module gc.util.marking;
 
 //debug = USAGE;
+//debug = GC_PROFILE;
 
 import gc.util.freelists;
 import gc.proxy;
 import gc.util.misc;
 import gc.util.injector;
-import core.stdc.stdlib : abort;
+static import gc.util.grapher;
+import clib = core.stdc.stdlib;
+
+debug (GC_PROFILE) import core.stdc.time;
 
 //Scan a region for pointers
 void scanForPointers(void* ptr, size_t sz, PointerQueue* q) {
@@ -53,6 +57,12 @@ void incrementEpoch() {
 
 //increment the epoch before calling this
 void verifyRecursive(InjectorData* fndatahead, Freelist* fl) {
+    
+    debug (GC_PROFILE) {
+        clock_t start, stop;
+        start = clock();
+    }
+    
     InjectorData* idata = fndatahead;
     while (idata !is null) {
         for (int i=0; i<idata.npayloads; ++i)
@@ -68,4 +78,43 @@ void verifyRecursive(InjectorData* fndatahead, Freelist* fl) {
         globs[i].updateConnections(fl);
     }
     
+    if (globs !is null) clib.free(globs);
+    
+    debug (GC_PROFILE) {
+        stop = clock();
+        verifyTime += (stop-start);
+    }
+    
+}
+
+void verifyFunctions(InjectorData* fndatahead, Freelist* fl) {
+    InjectorData* idata = fndatahead;
+    bool changes;
+    while (idata !is null) {
+        if (idata.counter > _gc.verifyThreshold) {
+            debug (USAGE) printf("<M> verifying roots of %p\n",idata.return_ptr);
+            changes = true;
+            size_t n;
+            for (void** ptr=idata.barrier.pbot; ptr<idata.barrier.ptop; ++ptr) {
+                if (potentialPointer(*ptr)) {
+                    auto pp = fl.regionOf(*ptr);
+                    if (pp !is null) {
+                        if (n >= idata.psz) {
+                            idata.payload = cast(injector_payload_t*)clib.realloc(idata.payload, (n+2) * injector_payload_t.sizeof);
+                            idata.psz += 2;
+                        }
+                        debug (USAGE) printf("<M> root found (%p)\n",pp);
+                        idata.payload[n++] = pp;
+                    }
+                }
+            }
+            idata.counter = 0;
+            idata.npayloads = n;
+        }
+        idata = idata.prev;
+    }
+    if (changes || _gc.collectStartThreshold()) {
+        _gc.fullCollect();
+    }
+        
 }

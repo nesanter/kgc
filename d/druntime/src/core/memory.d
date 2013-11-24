@@ -127,7 +127,9 @@ private
     
     extern (C) void gc_dump();
     extern (C) void gc_registerFunction(string name = __FUNCTION__);
-    extern (C) void gc_graph_output_dot(bool full, bool nointerconnect=false);
+    extern (C) void gc_graph_output_dot(bool full, bool nointerconnect=false, bool floaters=true);
+    
+    extern(C) size_t gc_dumpPointer(void* p);
 }
 
 
@@ -783,8 +785,12 @@ struct GC
      *  nointerconnect = if true, ignore inter-node connections
      */
     version (GCOUT) {
-        static void graph_output_dot(bool full, bool nointerconnect=false) {
-            gc_graph_output_dot(full,nointerconnect);
+        static void graph_output_dot(bool full, bool nointerconnect=false, bool floaters = true) {
+            gc_graph_output_dot(full,nointerconnect,floaters);
         }
+    }
+    
+    static void dumpPointer(void* p) {
+        gc_dumpPointer(p);
     }
 }
